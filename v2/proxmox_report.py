@@ -31,8 +31,13 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import ssl
+import logging
+import time
 from http.cookiejar import CookieJar
 from typing import Any, Dict, List, Optional, Tuple
+
+# Logger initialization
+logger = logging.getLogger("proxreporter")
 
 # ============================================================================
 # CONFIGURAZIONE
@@ -272,7 +277,7 @@ class ProxmoxLocalExtractor:
     
     def detect_execution_mode(self):
         """Rileva se siamo su host Proxmox o remoto"""
-        print("→ Rilevamento modalità esecuzione...")
+        logger.info("→ Rilevamento modalità esecuzione...")
         
         # Verifica se siamo su host Proxmox
         proxmox_indicators = [
@@ -285,19 +290,19 @@ class ProxmoxLocalExtractor:
             if os.path.exists(indicator):
                 self.is_proxmox_host = True
                 self.execution_mode = 'local'
-                print(f"  ✓ Rilevato host Proxmox (indicatore: {indicator})")
+                logger.info(f"  ✓ Rilevato host Proxmox (indicatore: {indicator})")
                 return 'local'
         
         # Se non siamo su Proxmox, verifica se abbiamo configurazione SSH
         ssh_config = self.config.get('ssh', {})
         if ssh_config.get('host') and ssh_config.get('username'):
             self.execution_mode = 'ssh'
-            print(f"  ✓ Modalità SSH remota (host: {ssh_config.get('host')})")
+            logger.info(f"  ✓ Modalità SSH remota (host: {ssh_config.get('host')})")
             return 'ssh'
         
         # Fallback all'API
         self.execution_mode = 'api'
-        print(f"  ✓ Modalità API remota")
+        logger.info(f"  ✓ Modalità API remota")
         return 'api'
     
     def connect_ssh(self):
@@ -316,12 +321,12 @@ class ProxmoxLocalExtractor:
             username = ssh_config.get('username', 'root')
             password = ssh_config.get('password', '')
             
-            print(f"  → Connessione SSH a {host}:{port}...")
+            logger.info(f"  → Connessione SSH a {host}:{port}...")
             self.ssh_client.connect(host, port=port, username=username, password=password, timeout=30)
-            print(f"  ✓ Connessione SSH stabilita")
+            logger.info(f"  ✓ Connessione SSH stabilita")
             return True
         except Exception as e:
-            print(f"  ✗ Errore connessione SSH: {e}")
+            logger.info(f"  ✗ Errore connessione SSH: {e}")
             return False
     
     def execute_remote_command(self, command):
@@ -339,13 +344,13 @@ class ProxmoxLocalExtractor:
                 error = stderr.read().decode('utf-8').strip()
                 cmd_preview = command[:60] + '...' if len(command) > 60 else command
                 if error:
-                    print(f"  ⚠ Errore comando '{cmd_preview}': {error}")
+                    logger.info(f"  ⚠ Errore comando '{cmd_preview}': {error}")
                 else:
-                    print(f"  ⚠ Comando '{cmd_preview}' fallito (exit code: {exit_status})")
+                    logger.info(f"  ⚠ Comando '{cmd_preview}' fallito (exit code: {exit_status})")
                 return None
         except Exception as e:
             cmd_preview = command[:60] + '...' if len(command) > 60 else command
-            print(f"  ⚠ Errore esecuzione comando '{cmd_preview}': {e}")
+            logger.info(f"  ⚠ Errore esecuzione comando '{cmd_preview}': {e}")
             return None
     
     def execute_local_command(self, command):
@@ -363,17 +368,17 @@ class ProxmoxLocalExtractor:
             else:
                 cmd_preview = command[:60] + '...' if len(command) > 60 else command
                 if result.stderr:
-                    print(f"  ⚠ Errore comando '{cmd_preview}': {result.stderr.strip()}")
+                    logger.info(f"  ⚠ Errore comando '{cmd_preview}': {result.stderr.strip()}")
                 else:
-                    print(f"  ⚠ Comando '{cmd_preview}' fallito (exit code: {result.returncode})")
+                    logger.info(f"  ⚠ Comando '{cmd_preview}' fallito (exit code: {result.returncode})")
                 return None
         except subprocess.TimeoutExpired:
             cmd_preview = command[:60] + '...' if len(command) > 60 else command
-            print(f"  ⚠ Timeout comando '{cmd_preview}' (30s)")
+            logger.info(f"  ⚠ Timeout comando '{cmd_preview}' (30s)")
             return None
         except Exception as e:
             cmd_preview = command[:60] + '...' if len(command) > 60 else command
-            print(f"  ⚠ Errore esecuzione comando '{cmd_preview}': {e}")
+            logger.info(f"  ⚠ Errore esecuzione comando '{cmd_preview}': {e}")
             return None
     
     def execute_command(self, command):
@@ -456,9 +461,9 @@ class ProxmoxLocalExtractor:
                     data = data['data']
                 return normalize_network_entries(data)
         except FileNotFoundError:
-            print("      ⚠ pvesh non trovato, impossibile ottenere configurazione network")
+            logger.info("      ⚠ pvesh non trovato, impossibile ottenere configurazione network")
         except Exception as e:
-            print(f"      ⚠ Errore lettura network nodo {node_name}: {e}")
+            logger.info(f"      ⚠ Errore lettura network nodo {node_name}: {e}")
         return []
     
     def get_hostname(self):
@@ -471,7 +476,7 @@ class ProxmoxLocalExtractor:
     
     def get_node_info(self):
         """Ottiene informazioni sul nodo Proxmox"""
-        print("→ Estrazione informazioni nodo...")
+        logger.info("→ Estrazione informazioni nodo...")
         
         node_info = {
             'hostname': None,
@@ -565,18 +570,18 @@ class ProxmoxLocalExtractor:
                 pass
         
         self.node_info = node_info
-        print(f"  ✓ Hostname: {node_info['hostname']}")
+        logger.info(f"  ✓ Hostname: {node_info['hostname']}")
         if node_info['cpu_count']:
-            print(f"  ✓ CPU cores: {node_info['cpu_count']}")
+            logger.info(f"  ✓ CPU cores: {node_info['cpu_count']}")
         if node_info['memory_total']:
             mem_gb = node_info['memory_total'] / (1024**3)
-            print(f"  ✓ Memoria totale: {mem_gb:.2f} GB")
+            logger.info(f"  ✓ Memoria totale: {mem_gb:.2f} GB")
         
         return node_info
     
     def get_cluster_info(self):
         """Ottiene informazioni sul cluster Proxmox"""
-        print("→ Estrazione informazioni cluster...")
+        logger.info("→ Estrazione informazioni cluster...")
         
         cluster_info = {
             'is_cluster': False,
@@ -602,14 +607,14 @@ class ProxmoxLocalExtractor:
                     if node_matches:
                         cluster_info['is_cluster'] = True
                         cluster_info['nodes'] = list(set(node_matches))
-                        print(f"  ✓ Cluster: {cluster_info['cluster_name']}")
-                        print(f"  ✓ Nodi: {', '.join(cluster_info['nodes'])}")
+                        logger.info(f"  ✓ Cluster: {cluster_info['cluster_name']}")
+                        logger.info(f"  ✓ Nodi: {', '.join(cluster_info['nodes'])}")
                     else:
-                        print("  ℹ Nodo standalone (non cluster)")
+                        logger.info("  ℹ Nodo standalone (non cluster)")
                 except Exception as e:
-                    print(f"  ⚠ Errore parsing corosync.conf: {e}")
+                    logger.info(f"  ⚠ Errore parsing corosync.conf: {e}")
             else:
-                print("  ℹ Nodo standalone (non cluster)")
+                logger.info("  ℹ Nodo standalone (non cluster)")
         else:
             # Leggi localmente
             if os.path.exists(corosync_conf):
@@ -627,14 +632,14 @@ class ProxmoxLocalExtractor:
                         if node_matches:
                             cluster_info['is_cluster'] = True
                             cluster_info['nodes'] = list(set(node_matches))
-                            print(f"  ✓ Cluster: {cluster_info['cluster_name']}")
-                            print(f"  ✓ Nodi: {', '.join(cluster_info['nodes'])}")
+                            logger.info(f"  ✓ Cluster: {cluster_info['cluster_name']}")
+                            logger.info(f"  ✓ Nodi: {', '.join(cluster_info['nodes'])}")
                         else:
-                            print("  ℹ Nodo standalone (non cluster)")
+                            logger.info("  ℹ Nodo standalone (non cluster)")
                 except Exception as e:
-                    print(f"  ⚠ Errore lettura corosync.conf: {e}")
+                    logger.info(f"  ⚠ Errore lettura corosync.conf: {e}")
             else:
-                print("  ℹ Nodo standalone (non cluster)")
+                logger.info("  ℹ Nodo standalone (non cluster)")
         
         self.cluster_info = cluster_info
         return cluster_info
@@ -662,14 +667,14 @@ class ProxmoxLocalExtractor:
                 if isinstance(data, list):
                     return data
         except FileNotFoundError:
-            print("  ⚠ pvesh non trovato, impossibile ottenere elenco nodi")
+            logger.info("  ⚠ pvesh non trovato, impossibile ottenere elenco nodi")
         except Exception as e:
-            print(f"  ⚠ Errore lettura nodi via pvesh: {e}")
+            logger.info(f"  ⚠ Errore lettura nodi via pvesh: {e}")
         return []
 
     def get_all_hosts_info(self):
         """Ottiene informazioni dettagliate per tutti i nodi rilevati"""
-        print("→ Estrazione informazioni dettagliate degli host del cluster...")
+        logger.info("→ Estrazione informazioni dettagliate degli host del cluster...")
 
         all_hosts_info: List[Dict[str, Any]] = []
         discovered_nodes: List[str] = []
@@ -686,10 +691,10 @@ class ProxmoxLocalExtractor:
                 if node_name and node_name not in discovered_nodes:
                     discovered_nodes.append(node_name)
             if len(discovered_nodes) > 1:
-                print(f"  ℹ Nodi cluster rilevati: {', '.join(discovered_nodes)}")
+                logger.info(f"  ℹ Nodi cluster rilevati: {', '.join(discovered_nodes)}")
         else:
             if self.execution_mode not in ('local', 'ssh'):
-                print("  ℹ Modalità API: raccolta limitata alle informazioni generiche")
+                logger.info("  ℹ Modalità API: raccolta limitata alle informazioni generiche")
 
         # Aggiorna cluster_info per il report riassuntivo
         self.cluster_info.setdefault('nodes', discovered_nodes if discovered_nodes else [local_hostname])
@@ -702,9 +707,9 @@ class ProxmoxLocalExtractor:
                 cpu_summary = info.get('cpu_total_cores') or info.get('cpu_cores') or 'N/A'
                 mem_total = info.get('memory_total_gb')
                 mem_summary = f"{mem_total:.2f} GiB" if isinstance(mem_total, (int, float)) else 'N/A'
-                print(f"  ✓ Host {info.get('hostname')}: CPU {cpu_summary}, RAM {mem_summary}, Storage: {len(info.get('storage', []))} storage")
+                logger.info(f"  ✓ Host {info.get('hostname')}: CPU {cpu_summary}, RAM {mem_summary}, Storage: {len(info.get('storage', []))} storage")
             else:
-                print(f"  ⚠ Impossibile ottenere informazioni host {node_name}")
+                logger.info(f"  ⚠ Impossibile ottenere informazioni host {node_name}")
 
         return all_hosts_info
     
@@ -918,7 +923,7 @@ class ProxmoxLocalExtractor:
             try:
                 subscription_info = api_get(f'nodes/{node_name}/subscription')
                 if isinstance(subscription_info, dict):
-                    print(f"  → Subscription info ricevuta via API per {node_name}")
+                    logger.info(f"  → Subscription info ricevuta via API per {node_name}")
                     # Usa schema corretto lic_*
                     host_info['license_status'] = subscription_info.get('status')
                     host_info['license_message'] = subscription_info.get('message')
@@ -947,9 +952,9 @@ class ProxmoxLocalExtractor:
                     if reg_date:
                         host_info['lic_regdate'] = str(reg_date)
                     
-                    print(f"  → lic_status: {host_info.get('lic_status')}, lic_key: {host_info.get('lic_key')}")
+                    logger.info(f"  → lic_status: {host_info.get('lic_status')}, lic_key: {host_info.get('lic_key')}")
             except Exception as e:
-                print(f"  ⚠ Errore lettura subscription via API: {e}")
+                logger.info(f"  ⚠ Errore lettura subscription via API: {e}")
             
             # Storage - IMPORTANTE: estrai per ogni nodo
             try:
@@ -978,11 +983,11 @@ class ProxmoxLocalExtractor:
                                 if storage_details.get('avail'):
                                     storage_info['available_gb'] = storage_details.get('avail') / (1024**3)
                         except Exception as e:
-                            print(f"      ⚠ Errore dettagli storage {storage_name}: {e}")
+                            logger.info(f"      ⚠ Errore dettagli storage {storage_name}: {e}")
                         
                         host_info['storage'].append(storage_info)
             except Exception as e:
-                print(f"      ⚠ Errore lettura storage nodo {node_name}: {e}")
+                logger.info(f"      ⚠ Errore lettura storage nodo {node_name}: {e}")
             # Network interfaces via API
             try:
                 network_data = api_get(f'nodes/{node_name}/network')
@@ -990,10 +995,10 @@ class ProxmoxLocalExtractor:
                 if normalized_network:
                     host_info['network_interfaces'] = normalized_network
             except Exception as e:
-                print(f"      ⚠ Errore rete nodo {node_name}: {e}")
+                logger.info(f"      ⚠ Errore rete nodo {node_name}: {e}")
             
         except Exception as e:
-            print(f"      ⚠ Errore estrazione info nodo {node_name}: {e}")
+            logger.info(f"      ⚠ Errore estrazione info nodo {node_name}: {e}")
             return None
         
         if not host_info.get('network_interfaces'):
@@ -1147,7 +1152,7 @@ class ProxmoxLocalExtractor:
             try:
                 sub_output = executor('pvesubscription get 2>/dev/null')
                 if sub_output:
-                    print(f"  → Output pvesubscription get ricevuto ({len(sub_output)} caratteri)")
+                    logger.info(f"  → Output pvesubscription get ricevuto ({len(sub_output)} caratteri)")
                     # Parse output di pvesubscription get
                     sub_data = {}
                     for line in sub_output.splitlines():
@@ -1158,13 +1163,13 @@ class ProxmoxLocalExtractor:
                             value = value.strip()
                             sub_data[key] = value
                     
-                    print(f"  → Parsed {len(sub_data)} campi subscription")
+                    logger.info(f"  → Parsed {len(sub_data)} campi subscription")
                     
                     # Estrai campi principali con schema corretto
                     # status -> lic_status
                     if sub_data.get('status'):
                         host_info['lic_status'] = sub_data['status']
-                        print(f"  → lic_status: {sub_data['status']}")
+                        logger.info(f"  → lic_status: {sub_data['status']}")
                     # key -> lic_key
                     if sub_data.get('key'):
                         host_info['lic_key'] = sub_data['key']
@@ -1187,9 +1192,9 @@ class ProxmoxLocalExtractor:
                     if sub_data.get('regdate'):
                         host_info['lic_regdate'] = sub_data['regdate']
                 else:
-                    print("  ⚠ pvesubscription get non ha restituito output")
+                    logger.info("  ⚠ pvesubscription get non ha restituito output")
             except Exception as e:
-                print(f"  ⚠ Errore durante estrazione subscription: {e}")
+                logger.info(f"  ⚠ Errore durante estrazione subscription: {e}")
 
         if not collect_network:
             return
@@ -1353,7 +1358,7 @@ class ProxmoxLocalExtractor:
             # Aggiorna host_info con tutte le interfacce
             host_info['network_interfaces'] = list(entries_by_name.values())
         except Exception as e:
-            print(f"  ⚠ Errore lettura interfacce di rete: {e}")
+            logger.info(f"  ⚠ Errore lettura interfacce di rete: {e}")
     
     def get_detailed_host_info(self):
         """Ottiene informazioni dettagliate sull'host corrente (backward compatibility)"""
@@ -1362,9 +1367,9 @@ class ProxmoxLocalExtractor:
     def get_detailed_host_info_for_node(self, node_name=None):
         """Ottiene informazioni dettagliate su un host Proxmox specifico"""
         if node_name:
-            print(f"    → Estrazione info per nodo: {node_name}")
+            logger.info(f"    → Estrazione info per nodo: {node_name}")
         else:
-            print("    → Estrazione info host corrente...")
+            logger.info("    → Estrazione info host corrente...")
         
         host_info = {
             'hostname': node_name or self.node_info.get('hostname', 'unknown'),
@@ -1653,7 +1658,7 @@ class ProxmoxLocalExtractor:
                                 if normalized_network:
                                     host_info['network_interfaces'] = normalized_network
                             except Exception as network_exc:
-                                print(f"      ⚠ Errore rete nodo {node_name}: {network_exc}")
+                                logger.info(f"      ⚠ Errore rete nodo {node_name}: {network_exc}")
                             
                             # Storage
                             try:
@@ -1695,7 +1700,7 @@ class ProxmoxLocalExtractor:
                     except:
                         continue
             except Exception as e:
-                print(f"      ⚠ Errore API per nodo {node_name}: {e}")
+                logger.info(f"      ⚠ Errore API per nodo {node_name}: {e}")
         
         # Enrichment con comandi solo per host corrente e se possiamo eseguire comandi
         can_use_commands = (not node_name or node_name == self.node_info.get('hostname')) and self.execution_mode != 'api'
@@ -1758,7 +1763,7 @@ class ProxmoxLocalExtractor:
                     except Exception:
                         pass
             except Exception as e:
-                print(f"  ⚠ Errore lettura versione Proxmox: {e}")
+                logger.info(f"  ⚠ Errore lettura versione Proxmox: {e}")
         
         # CPU dettagliata
         try:
@@ -1823,9 +1828,9 @@ class ProxmoxLocalExtractor:
                     except:
                         pass
                 except Exception as e:
-                    print(f"  ⚠ Errore lettura CPU info: {e}")
+                    logger.info(f"  ⚠ Errore lettura CPU info: {e}")
         except Exception as e:
-            print(f"  ⚠ Errore generale CPU: {e}")
+            logger.info(f"  ⚠ Errore generale CPU: {e}")
         
         # Memoria dettagliata
         try:
@@ -1865,9 +1870,9 @@ class ProxmoxLocalExtractor:
                             if mem_total:
                                 host_info['memory_used_gb'] = host_info['memory_total_gb'] - host_info['memory_free_gb']
                 except Exception as e:
-                    print(f"  ⚠ Errore lettura memoria: {e}")
+                    logger.info(f"  ⚠ Errore lettura memoria: {e}")
         except Exception as e:
-            print(f"  ⚠ Errore generale memoria: {e}")
+            logger.info(f"  ⚠ Errore generale memoria: {e}")
         
         # Storage (solo se non già ottenuto via API e siamo sull'host corrente)
         if not host_info.get('storage') and (not node_name or node_name == self.node_info.get('hostname')):
@@ -1898,7 +1903,7 @@ class ProxmoxLocalExtractor:
                                 
                                 host_info['storage'].append(storage_info)
                         except Exception as e:
-                            print(f"      ⚠ Errore parsing storage: {e}")
+                            logger.info(f"      ⚠ Errore parsing storage: {e}")
                 else:
                     try:
                         result = subprocess.run(
@@ -1929,11 +1934,11 @@ class ProxmoxLocalExtractor:
                                 
                                 host_info['storage'].append(storage_info)
                     except FileNotFoundError:
-                        print(f"      ⚠ pvesm non trovato, storage non disponibile per {node_name or 'host corrente'}")
+                        logger.info(f"      ⚠ pvesm non trovato, storage non disponibile per {node_name or 'host corrente'}")
                     except Exception as e:
-                        print(f"      ⚠ Errore lettura storage: {e}")
+                        logger.info(f"      ⚠ Errore lettura storage: {e}")
             except Exception as e:
-                print(f"      ⚠ Errore generale storage: {e}")
+                logger.info(f"      ⚠ Errore generale storage: {e}")
         
         # Interfacce di rete (solo quelle UP)
         try:
@@ -1991,7 +1996,7 @@ class ProxmoxLocalExtractor:
                                 
                                 host_info['network_interfaces'].append(iface_info)
                         except Exception as e:
-                            print(f"  ⚠ Errore lettura interfaccia {iface}: {e}")
+                            logger.info(f"  ⚠ Errore lettura interfaccia {iface}: {e}")
                             continue
             else:
                 try:
@@ -2062,35 +2067,35 @@ class ProxmoxLocalExtractor:
                                     
                                     host_info['network_interfaces'].append(iface_info)
                             except Exception as e:
-                                print(f"  ⚠ Errore lettura interfaccia {iface}: {e}")
+                                logger.info(f"  ⚠ Errore lettura interfaccia {iface}: {e}")
                                 continue
                 except Exception as e:
-                    print(f"  ⚠ Errore lettura interfacce: {e}")
+                    logger.info(f"  ⚠ Errore lettura interfacce: {e}")
         except Exception as e:
-            print(f"  ⚠ Errore generale interfacce: {e}")
+            logger.info(f"  ⚠ Errore generale interfacce: {e}")
         
-        print(f"  ✓ Hostname: {host_info['hostname']}")
+        logger.info(f"  ✓ Hostname: {host_info['hostname']}")
         if host_info.get('status'):
-            print(f"  ✓ Stato nodo: {host_info['status']}")
+            logger.info(f"  ✓ Stato nodo: {host_info['status']}")
         if host_info.get('uptime_human'):
             uptime_line = f"  ✓ Uptime: {host_info['uptime_human']}"
             if host_info.get('uptime_seconds') is not None:
                 uptime_line += f" ({int(host_info['uptime_seconds'])}s)"
-            print(uptime_line)
+            logger.info(uptime_line)
         
         if host_info.get('cpu_model'):
-            print(f"  ✓ CPU: {host_info['cpu_model']}")
+            logger.info(f"  ✓ CPU: {host_info['cpu_model']}")
         
         if host_info.get('cpu_total_cores'):
             cpu_line = f"  ✓ CPU totali: {host_info['cpu_total_cores']}"
             if host_info.get('cpu_usage_percent') is not None:
                 cpu_line += f" - utilizzo {host_info['cpu_usage_percent']:.2f}%"
-            print(cpu_line)
+            logger.info(cpu_line)
         elif host_info.get('cpu_usage_percent') is not None:
-            print(f"  ✓ CPU usage: {host_info['cpu_usage_percent']:.2f}%")
+            logger.info(f"  ✓ CPU usage: {host_info['cpu_usage_percent']:.2f}%")
         
         if host_info.get('io_delay_percent') is not None:
-            print(f"  ✓ IO delay: {host_info['io_delay_percent']:.2f}%")
+            logger.info(f"  ✓ IO delay: {host_info['io_delay_percent']:.2f}%")
         
         load_values = [
             host_info.get('load_average_1m'),
@@ -2098,38 +2103,38 @@ class ProxmoxLocalExtractor:
             host_info.get('load_average_15m')
         ]
         if all(value is not None for value in load_values):
-            print(f"  ✓ Load average: {load_values[0]:.2f}, {load_values[1]:.2f}, {load_values[2]:.2f}")
+            logger.info(f"  ✓ Load average: {load_values[0]:.2f}, {load_values[1]:.2f}, {load_values[2]:.2f}")
         
         if host_info.get('memory_total_gb') is not None:
             if host_info.get('memory_used_gb') is not None and host_info.get('memory_usage_percent') is not None:
-                print(f"  ✓ RAM usage: {host_info['memory_usage_percent']:.2f}% ({host_info['memory_used_gb']:.2f} GiB of {host_info['memory_total_gb']:.2f} GiB)")
+                logger.info(f"  ✓ RAM usage: {host_info['memory_usage_percent']:.2f}% ({host_info['memory_used_gb']:.2f} GiB of {host_info['memory_total_gb']:.2f} GiB)")
             else:
-                print(f"  ✓ RAM totale: {host_info['memory_total_gb']:.2f} GiB")
+                logger.info(f"  ✓ RAM totale: {host_info['memory_total_gb']:.2f} GiB")
         
         if host_info.get('ksm_sharing_gb') is not None:
-            print(f"  ✓ KSM sharing: {host_info['ksm_sharing_gb']:.2f} GiB")
+            logger.info(f"  ✓ KSM sharing: {host_info['ksm_sharing_gb']:.2f} GiB")
         
         if host_info.get('swap_total_gb') is not None:
             if host_info.get('swap_used_gb') is not None and host_info.get('swap_usage_percent') is not None:
-                print(f"  ✓ Swap usage: {host_info['swap_usage_percent']:.2f}% ({host_info['swap_used_gb']:.2f} GiB of {host_info['swap_total_gb']:.2f} GiB)")
+                logger.info(f"  ✓ Swap usage: {host_info['swap_usage_percent']:.2f}% ({host_info['swap_used_gb']:.2f} GiB of {host_info['swap_total_gb']:.2f} GiB)")
             else:
-                print(f"  ✓ Swap totale: {host_info['swap_total_gb']:.2f} GiB")
+                logger.info(f"  ✓ Swap totale: {host_info['swap_total_gb']:.2f} GiB")
         
         if host_info.get('rootfs_total_gb') is not None:
             if host_info.get('rootfs_used_gb') is not None and host_info.get('rootfs_usage_percent') is not None:
-                print(f"  ✓ RootFS: {host_info['rootfs_usage_percent']:.2f}% ({host_info['rootfs_used_gb']:.2f} GiB of {host_info['rootfs_total_gb']:.2f} GiB)")
+                logger.info(f"  ✓ RootFS: {host_info['rootfs_usage_percent']:.2f}% ({host_info['rootfs_used_gb']:.2f} GiB of {host_info['rootfs_total_gb']:.2f} GiB)")
             else:
-                print(f"  ✓ RootFS totale: {host_info['rootfs_total_gb']:.2f} GiB")
+                logger.info(f"  ✓ RootFS totale: {host_info['rootfs_total_gb']:.2f} GiB")
         
         if host_info.get('kernel_version'):
-            print(f"  ✓ Kernel: {host_info['kernel_version']}")
+            logger.info(f"  ✓ Kernel: {host_info['kernel_version']}")
         if host_info.get('manager_version'):
-            print(f"  ✓ Manager Version: {host_info['manager_version']}")
+            logger.info(f"  ✓ Manager Version: {host_info['manager_version']}")
         elif host_info.get('proxmox_version'):
-            print(f"  ✓ Versione Proxmox: {host_info['proxmox_version']}")
+            logger.info(f"  ✓ Versione Proxmox: {host_info['proxmox_version']}")
         
         if host_info.get('boot_mode'):
-            print(f"  ✓ Boot mode: {host_info['boot_mode']}")
+            logger.info(f"  ✓ Boot mode: {host_info['boot_mode']}")
         
         if host_info.get('license_status') or host_info.get('license_level'):
             license_parts = []
@@ -2138,30 +2143,30 @@ class ProxmoxLocalExtractor:
             if host_info.get('license_status'):
                 license_parts.append(host_info['license_status'])
             if license_parts:
-                print(f"  ✓ Licenza: {', '.join(license_parts)}")
+                logger.info(f"  ✓ Licenza: {', '.join(license_parts)}")
             if host_info.get('license_message'):
-                print(f"    ℹ {host_info['license_message']}")
+                logger.info(f"    ℹ {host_info['license_message']}")
         
         if host_info.get('subscription_type'):
             sub_line = f"  ✓ Subscription: {host_info['subscription_type']}"
             sockets = host_info.get('subscription_sockets')
             if sockets not in (None, 'N/A'):
                 sub_line += f" ({sockets} socket{'s' if str(sockets) not in ('1', '1.0') else ''})"
-            print(sub_line)
+            logger.info(sub_line)
         if host_info.get('subscription_key'):
-            print(f"    ➜ Key: {host_info['subscription_key']}")
+            logger.info(f"    ➜ Key: {host_info['subscription_key']}")
         if host_info.get('subscription_server_id'):
-            print(f"    ➜ Server ID: {host_info['subscription_server_id']}")
+            logger.info(f"    ➜ Server ID: {host_info['subscription_server_id']}")
         if host_info.get('subscription_last_check'):
-            print(f"    ➜ Ultimo controllo: {host_info['subscription_last_check']}")
+            logger.info(f"    ➜ Ultimo controllo: {host_info['subscription_last_check']}")
         if host_info.get('subscription_next_due'):
-            print(f"    ➜ Prossima scadenza: {host_info['subscription_next_due']}")
+            logger.info(f"    ➜ Prossima scadenza: {host_info['subscription_next_due']}")
         
         if host_info.get('repository_status'):
-            print(f"  ✓ Repository: {host_info['repository_status']}")
+            logger.info(f"  ✓ Repository: {host_info['repository_status']}")
         
-        print(f"  ✓ Storage trovati: {len(host_info['storage'])}")
-        print(f"  ✓ Interfacce di rete: {len(host_info['network_interfaces'])}")
+        logger.info(f"  ✓ Storage trovati: {len(host_info['storage'])}")
+        logger.info(f"  ✓ Interfacce di rete: {len(host_info['network_interfaces'])}")
         
         return host_info
     
@@ -2273,10 +2278,10 @@ class ProxmoxLocalExtractor:
                     # IMPORTANTE: Estrai informazioni licenza se non già presenti
                     if not host_info.get('lic_status') and self.execution_mode in ('local', 'ssh'):
                         try:
-                            print(f"  → Tentativo estrazione licenza per {host_info.get('hostname')}")
+                            logger.info(f"  → Tentativo estrazione licenza per {host_info.get('hostname')}")
                             sub_output = self.execute_command('pvesubscription get 2>/dev/null')
                             if sub_output:
-                                print(f"  → Output pvesubscription get ricevuto ({len(sub_output)} caratteri)")
+                                logger.info(f"  → Output pvesubscription get ricevuto ({len(sub_output)} caratteri)")
                                 sub_data = {}
                                 for line in sub_output.splitlines():
                                     line = line.strip()
@@ -2286,10 +2291,10 @@ class ProxmoxLocalExtractor:
                                         value = value.strip()
                                         sub_data[key] = value
                                 
-                                print(f"  → Parsed {len(sub_data)} campi subscription")
+                                logger.info(f"  → Parsed {len(sub_data)} campi subscription")
                                 if sub_data.get('status'):
                                     host_info['lic_status'] = sub_data['status']
-                                    print(f"  → lic_status: {sub_data['status']}")
+                                    logger.info(f"  → lic_status: {sub_data['status']}")
                                 if sub_data.get('key'):
                                     host_info['lic_key'] = sub_data['key']
                                 if sub_data.get('level'):
@@ -2305,9 +2310,9 @@ class ProxmoxLocalExtractor:
                                 if sub_data.get('regdate'):
                                     host_info['lic_regdate'] = sub_data['regdate']
                             else:
-                                print("  ⚠ pvesubscription get non ha restituito output")
+                                logger.info("  ⚠ pvesubscription get non ha restituito output")
                         except Exception as e:
-                            print(f"  ⚠ Errore estrazione licenza: {e}")
+                            logger.info(f"  ⚠ Errore estrazione licenza: {e}")
                     
                     row = {}
                     for field in host_fieldnames:
@@ -2423,14 +2428,14 @@ class ProxmoxLocalExtractor:
 
             return host_success, storage_filepath, network_filepath
         except Exception as e:
-            print(f"✗ Errore salvataggio info host: {e}")
+            logger.info(f"✗ Errore salvataggio info host: {e}")
             import traceback
             traceback.print_exc()
             return False, None, None
     
     def get_vms_from_local_api(self):
         """Ottiene VM usando API Proxmox con informazioni complete (come proxmox_auto_report.py)"""
-        print("  → Tentativo via API con estrazione completa...")
+        logger.info("  → Tentativo via API con estrazione completa...")
         
         vms = []
         
@@ -2482,7 +2487,7 @@ class ProxmoxLocalExtractor:
                     ticket = result['ticket']
                     csrf_token = result['CSRFPreventionToken']
                     
-                    print(f"    ✓ Connesso a {host}:{port}")
+                    logger.info(f"    ✓ Connesso a {host}:{port}")
                     
                     # Funzione helper per richieste API
                     def api_get(endpoint):
@@ -2498,7 +2503,7 @@ class ProxmoxLocalExtractor:
                     
                     for node in nodes_data:
                         node_name = node['node']
-                        print(f"      → Scanning nodo: {node_name}")
+                        logger.info(f"      → Scanning nodo: {node_name}")
                         
                         # Ottieni VM
                         node_vms = api_get(f'nodes/{node_name}/qemu')
@@ -2528,7 +2533,7 @@ class ProxmoxLocalExtractor:
                                     'diskwrite': vm.get('diskwrite', 0),
                                 }
                                 
-                                print(f"        → VM {vmid} ({vm_data['name']}): {status}")
+                                logger.info(f"        → VM {vmid} ({vm_data['name']}): {status}")
                                 
                                 # Configurazione VM completa
                                 try:
@@ -2616,7 +2621,7 @@ class ProxmoxLocalExtractor:
                                         vm_data['networks'] = ', '.join(networks) if networks else 'N/A'
                                         vm_data['networks_details'] = json.dumps(network_details) if network_details else ''
                                 except Exception as e:
-                                    print(f"          ⚠ Errore configurazione VM {vmid}: {e}")
+                                    logger.info(f"          ⚠ Errore configurazione VM {vmid}: {e}")
                                     vm_data['bios'] = 'N/A'
                                     vm_data['machine'] = 'N/A'
                                     vm_data['agent'] = '0'
@@ -2669,7 +2674,7 @@ class ProxmoxLocalExtractor:
                                 vm_data['ip_addresses'] = '; '.join(unique_ips) if unique_ips else 'N/A'
                                 
                                 vms.append(vm_data)
-                                print(f"        ✓ VM {vmid} ({vm_data['name']}): {status}")
+                                logger.info(f"        ✓ VM {vmid} ({vm_data['name']}): {status}")
                     
                     # Se abbiamo trovato VM, ritorna
                     if vms:
@@ -2677,26 +2682,26 @@ class ProxmoxLocalExtractor:
                         
                 except urllib.error.URLError as e:
                     if 'Connection refused' in str(e) or 'Errno 61' in str(e):
-                        print(f"    ⚠ {host}:{port} non raggiungibile (Connection refused)")
+                        logger.info(f"    ⚠ {host}:{port} non raggiungibile (Connection refused)")
                         continue
                     else:
-                        print(f"    ⚠ Errore connessione a {host}:{port}: {e}")
+                        logger.info(f"    ⚠ Errore connessione a {host}:{port}: {e}")
                         continue
                 except Exception as e:
-                    print(f"    ⚠ Errore API {host}:{port}: {e}")
+                    logger.info(f"    ⚠ Errore API {host}:{port}: {e}")
                     continue
             
             return vms
             
         except Exception as e:
-            print(f"    ⚠ Errore generale API: {e}")
+            logger.info(f"    ⚠ Errore generale API: {e}")
             import traceback
             traceback.print_exc()
             return []
     
     def get_vms_from_local(self):
         """Ottiene lista VM usando comandi locali o SSH"""
-        print("→ Estrazione VM da sistema...")
+        logger.info("→ Estrazione VM da sistema...")
         
         vms = []
         
@@ -2728,13 +2733,13 @@ class ProxmoxLocalExtractor:
             except FileNotFoundError:
                 nodes_data = []
             except Exception as e:
-                print(f"  ⚠ Errore pvesh: {e}")
+                logger.info(f"  ⚠ Errore pvesh: {e}")
                 nodes_data = []
         
         if nodes_data:
             for node in nodes_data:
                 node_name = node.get('node', '')
-                print(f"  → Scanning nodo: {node_name}")
+                logger.info(f"  → Scanning nodo: {node_name}")
                 
                 # Ottieni VM del nodo
                 if self.execution_mode == 'ssh':
@@ -2760,7 +2765,7 @@ class ProxmoxLocalExtractor:
                         else:
                             node_vms = []
                     except Exception as e:
-                        print(f"    ⚠ Errore lettura VM nodo {node_name}: {e}")
+                        logger.info(f"    ⚠ Errore lettura VM nodo {node_name}: {e}")
                         node_vms = []
                 
                 for vm in node_vms:
@@ -2987,33 +2992,33 @@ class ProxmoxLocalExtractor:
                         vm_data['diskwrite'] = vm.get('diskwrite', 0)
                         
                         vms.append(vm_data)
-                        print(f"    ✓ VM {vmid} ({vm_data['name']}): {status}")
+                        logger.info(f"    ✓ VM {vmid} ({vm_data['name']}): {status}")
             
             self.vms_data = vms
             if vms:
-                print(f"✓ Trovate {len(vms)} VM attive (via pvesh)")
+                logger.info(f"✓ Trovate {len(vms)} VM attive (via pvesh)")
                 return vms
         
         # Se pvesh non ha funzionato, prova metodo alternativo
         if not vms:
             if self.execution_mode == 'ssh':
-                print("  ⚠ pvesh non disponibile via SSH, tentativo metodo alternativo...")
+                logger.info("  ⚠ pvesh non disponibile via SSH, tentativo metodo alternativo...")
             else:
-                print("  ⚠ pvesh non trovato, tentativo metodo alternativo...")
+                logger.info("  ⚠ pvesh non trovato, tentativo metodo alternativo...")
         
         # Metodo alternativo 1: API locale
         if not vms:
             vms = self.get_vms_from_local_api()
             if vms:
                 self.vms_data = vms
-                print(f"✓ Trovate {len(vms)} VM attive (via API locale)")
+                logger.info(f"✓ Trovate {len(vms)} VM attive (via API locale)")
                 return vms
         
         # Metodo alternativo 2: leggi direttamente da /etc/pve/qemu-server
         try:
             qemu_dir = '/etc/pve/qemu-server'
             if os.path.exists(qemu_dir):
-                print("  → Lettura da /etc/pve/qemu-server...")
+                logger.info("  → Lettura da /etc/pve/qemu-server...")
                 
                 for filename in os.listdir(qemu_dir):
                     if filename.endswith('.conf'):
@@ -3053,19 +3058,19 @@ class ProxmoxLocalExtractor:
                                 if 'running' in result.stdout.lower():
                                     vm_data['status'] = 'running'
                                     vms.append(vm_data)
-                                    print(f"    ✓ VM {vmid} ({vm_data.get('name', 'N/A')}): running")
+                                    logger.info(f"    ✓ VM {vmid} ({vm_data.get('name', 'N/A')}): running")
                             except:
                                 pass
                                 
                         except Exception as e:
-                            print(f"    ⚠ Errore lettura {filename}: {e}")
+                            logger.info(f"    ⚠ Errore lettura {filename}: {e}")
                 
                 self.vms_data = vms
-                print(f"✓ Trovate {len(vms)} VM")
+                logger.info(f"✓ Trovate {len(vms)} VM")
                 return vms
                 
         except Exception as e:
-            print(f"  ✗ Errore metodo alternativo: {e}")
+            logger.info(f"  ✗ Errore metodo alternativo: {e}")
         
         return []
     
@@ -3210,11 +3215,11 @@ class ProxmoxLocalExtractor:
                     writer = csv.DictWriter(f, fieldnames=all_fields)
                     writer.writeheader()
                     writer.writerows(csv_data)
-                    print(f"  ✓ CSV salvato con {len(csv_data)} righe (host info + {len(self.vms_data)} VM)")
+                    logger.info(f"  ✓ CSV salvato con {len(csv_data)} righe (host info + {len(self.vms_data)} VM)")
             
             return True
         except Exception as e:
-            print(f"✗ Errore salvataggio CSV: {e}")
+            logger.info(f"✗ Errore salvataggio CSV: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -3233,7 +3238,7 @@ class SFTPUploader:
         self.ssh_client = None
     
     def connect(self):
-        """Connette al server remoto via SSH/SFTP"""
+        """Connette al server remoto via SSH/SFTP con Retry Logic"""
         if not self.sftp_config.get('enabled'):
             return False
         
@@ -3243,18 +3248,31 @@ class SFTPUploader:
         password = self.sftp_config.get('password')
         
         if not all([host, username, password]):
-            print("✗ Configurazione SFTP incompleta")
+            logger.error("Configurazione SFTP incompleta (mancano credenziali)")
             return False
         
-        try:
-            self.ssh_client = paramiko.SSHClient()
-            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            self.ssh_client.connect(host, port=port, username=username, password=password, timeout=30)
-            print(f"✓ Connessione SFTP stabilita a {host}:{port}")
-            return True
-        except Exception as e:
-            print(f"✗ Errore connessione SFTP: {e}")
-            return False
+        # Retry Logic
+        attempts = 3
+        delay = 5
+        
+        for i in range(attempts):
+            try:
+                self.ssh_client = paramiko.SSHClient()
+                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                logger.info(f"Connessione SFTP a {host}:{port} (Tentativo {i+1}/{attempts})...")
+                self.ssh_client.connect(host, port=port, username=username, password=password, timeout=30)
+                logger.info(f"Connessione SFTP stabilita con successo")
+                return True
+            except Exception as e:
+                logger.warning(f"Errore connessione SFTP: {e}")
+                if i < attempts - 1:
+                    logger.info(f"Attendo {delay}s prima di riprovare...")
+                    time.sleep(delay)
+                    delay *= 2  # Backoff esponenziale
+                else:
+                    logger.error("Tutti i tentativi di connessione SFTP sono falliti.")
+                    return False
+        return False
     
     def create_remote_directory(self, remote_path):
         """Crea directory remota se non esiste"""
@@ -3288,38 +3306,60 @@ class SFTPUploader:
                     try:
                         sftp.mkdir(current_path)
                         sftp.chdir(current_path)
-                        print(f"  ✓ Creata directory: {current_path}")
+                        logger.debug(f"Creata directory: {current_path}")
                     except Exception as e:
-                        print(f"✗ Errore creazione directory remota {current_path}: {e}")
+                        logger.error(f"Errore creazione directory remota {current_path}: {e}")
                         sftp.close()
                         return False
             
             sftp.close()
             return True
         except Exception as e:
-            print(f"✗ Errore creazione directory remota: {e}")
+            logger.error(f"Errore creazione directory remota: {e}")
             return False
     
     def upload_file(self, local_path, remote_path):
-        """Carica file su server remoto"""
-        try:
-            sftp = self.ssh_client.open_sftp()
-            
-            # Crea directory padre se necessario
-            remote_dir = os.path.dirname(remote_path)
-            if remote_dir:
-                self.create_remote_directory(remote_dir)
-            
-            # Carica file
-            sftp.put(local_path, remote_path)
-            sftp.close()
-            
-            file_size = os.path.getsize(local_path) / (1024 * 1024)  # MB
-            print(f"  ✓ Caricato: {os.path.basename(local_path)} ({file_size:.2f} MB)")
-            return True
-        except Exception as e:
-            print(f"✗ Errore upload {os.path.basename(local_path)}: {e}")
-            return False
+        """Carica file su server remoto con retry"""
+        attempts = 3
+        delay = 5
+        
+        for i in range(attempts):
+            try:
+                sftp = self.ssh_client.open_sftp()
+                
+                # Crea directory padre se necessario
+                remote_dir = os.path.dirname(remote_path)
+                if remote_dir:
+                    self.create_remote_directory(remote_dir)
+                
+                # Carica file
+                sftp.put(local_path, remote_path)
+                sftp.close()
+                
+                file_size = os.path.getsize(local_path) / (1024 * 1024)  # MB
+                logger.info(f"Caricato: {os.path.basename(local_path)} ({file_size:.2f} MB)")
+                return True
+            except Exception as e:
+                logger.warning(f"Errore upload {os.path.basename(local_path)}: {e}")
+                
+                if i < attempts - 1:
+                    logger.info("Tento riconnessione e riprovo...")
+                    try:
+                        self.ssh_client.close()
+                    except: 
+                        pass
+                    
+                    if self.connect():
+                        # Connessione riuscita, il loop continua e riprova upload
+                        pass 
+                    else:
+                        logger.error("Riconnessione fallita")
+                    
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    logger.error("Tutti i tentativi di upload sono falliti")
+        return False
     
     def upload_files(self, files, base_path):
         """Carica multipli file"""
@@ -3327,38 +3367,44 @@ class SFTPUploader:
         nomecliente = self.client_config.get('nomecliente', '')
         
         if not codcli or not nomecliente:
-            print("✗ codcli o nomecliente non configurati")
+            logger.error("codcli o nomecliente non configurati")
+            return False
+            
+        base_remote_path = f"{self.sftp_config.get('base_path', '/home/proxmox/uploads')}/{codcli}_{nomecliente}"
+        
+        logger.info(f"→ Upload SFTP su {self.sftp_config.get('host')}:{base_remote_path}")
+        
+        if not self.connect():
             return False
         
-        # Crea path remoto: direttamente nella base_path configurata
-        remote_base = base_path.rstrip('/') if base_path.endswith('/') else base_path
+        success = True
+        uploaded_count = 0
+        for file_path_str in files:
+            file_path = Path(file_path_str)
+            if not file_path.exists():
+                logger.warning(f"File non trovato: {file_path}")
+                continue
+                
+            remote_path = f"{base_remote_path}/{file_path.name}"
+            if self.upload_file(str(file_path), remote_path):
+                uploaded_count += 1
+            else:
+                success = False
         
-        if not remote_base:
-            remote_base = '/'
+        logger.info(f"✓ Upload completato: {uploaded_count}/{len(files)} file")
         
-        print(f"→ Upload SFTP su {self.sftp_config.get('host')}:{remote_base}")
-        
-        # Crea directory remota
-        if not self.create_remote_directory(remote_base):
-            return False
-        
-        # Carica file
-        uploaded = 0
-        for local_file in files:
-            if os.path.exists(local_file):
-                filename = os.path.basename(local_file)
-                remote_path = f"{remote_base}/{filename}"
-                if self.upload_file(local_file, remote_path):
-                    uploaded += 1
-        
-        print(f"✓ Upload completato: {uploaded}/{len(files)} file")
-        return uploaded == len(files)
+        try:
+            self.ssh_client.close()
+        except:
+            pass
+            
+        return success
     
     def close(self):
         """Chiude connessione SSH"""
         if self.ssh_client:
             self.ssh_client.close()
-            print("✓ Connessione SSH chiusa")
+            logger.info("✓ Connessione SSH chiusa")
 
 # ============================================================================
 # CLASSE BACKUP INTEGRATO
@@ -3379,7 +3425,7 @@ class ProxmoxBackupIntegrated:
     
     def create_backup(self, backup_dir, codcli, nomecliente, max_copies=5, server_identifier=None):
         """Crea backup configurazione Proxmox con rotazione"""
-        print("→ Creazione backup configurazione...")
+        logger.info("→ Creazione backup configurazione...")
         
         self.codcli = codcli
         self.nomecliente = nomecliente
@@ -3415,7 +3461,7 @@ class ProxmoxBackupIntegrated:
         existing_paths = [p for p in backup_paths if os.path.exists(p)]
         
         if not existing_paths:
-            print("✗ Nessun percorso valido per backup")
+            logger.info("✗ Nessun percorso valido per backup")
             return False
         
         try:
@@ -3423,26 +3469,26 @@ class ProxmoxBackupIntegrated:
                 for path in existing_paths:
                     try:
                         tar.add(path, arcname=os.path.basename(path), recursive=True)
-                        print(f"  ✓ Aggiunto: {path}")
+                        logger.info(f"  ✓ Aggiunto: {path}")
                     except Exception as e:
-                        print(f"  ⚠ Errore aggiunta {path}: {e}")
+                        logger.info(f"  ⚠ Errore aggiunta {path}: {e}")
             
             if os.path.exists(self.backup_file):
                 file_size = os.path.getsize(self.backup_file) / (1024 * 1024)
-                print(f"✓ Backup creato: {self.backup_file} ({file_size:.2f} MB)")
+                logger.info(f"✓ Backup creato: {self.backup_file} ({file_size:.2f} MB)")
                 return True
             else:
-                print("✗ Backup non creato")
+                logger.info("✗ Backup non creato")
                 return False
                 
         except Exception as e:
-            print(f"✗ Errore creazione backup: {e}")
+            logger.info(f"✗ Errore creazione backup: {e}")
             return False
     
     def create_backup_ssh(self, backup_paths):
         """Crea backup via SSH"""
         if not self.ssh_client:
-            print("✗ Connessione SSH non disponibile")
+            logger.info("✗ Connessione SSH non disponibile")
             return False
         
         try:
@@ -3450,13 +3496,13 @@ class ProxmoxBackupIntegrated:
             remote_backup = f"/tmp/proxmox_config_backup_{self.timestamp}.tar.gz"
             backup_cmd = f"tar czf {remote_backup} {' '.join(backup_paths)} 2>&1"
             
-            print(f"  → Esecuzione backup remoto...")
+            logger.info(f"  → Esecuzione backup remoto...")
             stdin, stdout, stderr = self.ssh_client.exec_command(backup_cmd, timeout=300)
             exit_status = stdout.channel.recv_exit_status()
             
             if exit_status == 0:
                 # Trasferisci file locale
-                print(f"  → Trasferimento file in locale...")
+                logger.info(f"  → Trasferimento file in locale...")
                 sftp = self.ssh_client.open_sftp()
                 sftp.get(remote_backup, self.backup_file)
                 sftp.close()
@@ -3466,18 +3512,18 @@ class ProxmoxBackupIntegrated:
                 
                 if os.path.exists(self.backup_file):
                     file_size = os.path.getsize(self.backup_file) / (1024 * 1024)
-                    print(f"✓ Backup creato: {self.backup_file} ({file_size:.2f} MB)")
+                    logger.info(f"✓ Backup creato: {self.backup_file} ({file_size:.2f} MB)")
                     return True
                 else:
-                    print("✗ Trasferimento file fallito")
+                    logger.info("✗ Trasferimento file fallito")
                     return False
             else:
                 error = stderr.read().decode().strip()
-                print(f"✗ Errore backup remoto: {error}")
+                logger.info(f"✗ Errore backup remoto: {error}")
                 return False
                 
         except Exception as e:
-            print(f"✗ Errore backup SSH: {e}")
+            logger.info(f"✗ Errore backup SSH: {e}")
             return False
     
     def get_backup_file(self):
@@ -3536,10 +3582,10 @@ def rotate_files(directory, base_filename, max_copies=5):
             for num in files_to_remove:
                 try:
                     os.remove(existing_files[num])
-                    print(f"  🗑️ Rimosso file vecchio: {os.path.basename(existing_files[num])}")
+                    logger.info(f"  🗑️ Rimosso file vecchio: {os.path.basename(existing_files[num])}")
                     del existing_files[num]
                 except Exception as e:
-                    print(f"  ⚠ Errore rimozione {os.path.basename(existing_files[num])}: {e}")
+                    logger.info(f"  ⚠ Errore rimozione {os.path.basename(existing_files[num])}: {e}")
         
         # Rinomina file esistenti (sposta avanti di 1)
         # IMPORTANTE: farlo in ordine inverso per evitare sovrascritture
@@ -3556,10 +3602,10 @@ def rotate_files(directory, base_filename, max_copies=5):
                         os.remove(new_filepath)
                     os.rename(old_filepath, new_filepath)
                 except Exception as e:
-                    print(f"  ⚠ Errore rinomina {os.path.basename(old_filepath)}: {e}")
+                    logger.info(f"  ⚠ Errore rinomina {os.path.basename(old_filepath)}: {e}")
         
     except Exception as e:
-        print(f"  ⚠ Errore rotazione file: {e}")
+        logger.info(f"  ⚠ Errore rotazione file: {e}")
 
 def feature_enabled(features, key, default=True):
     if not features:
@@ -3589,7 +3635,7 @@ def save_file_with_rotation(filepath, content_func, codcli, nomecliente, file_ty
                 f.write(content_func)
             return final_filepath
     except Exception as e:
-        print(f"  ⚠ Errore salvataggio {base_filename}: {e}")
+        logger.info(f"  ⚠ Errore salvataggio {base_filename}: {e}")
         return None
 
 # ============================================================================
@@ -3599,16 +3645,16 @@ def save_file_with_rotation(filepath, content_func, codcli, nomecliente, file_ty
 def load_config(config_file):
     """Carica file configurazione"""
     if not os.path.exists(config_file):
-        print(f"✗ File configurazione non trovato: {config_file}")
+        logger.info(f"✗ File configurazione non trovato: {config_file}")
         return None
     
     try:
         with open(config_file, 'r', encoding='utf-8') as f:
             config = json.load(f)
-        print(f"✓ Configurazione caricata: {config_file}")
+        logger.info(f"✓ Configurazione caricata: {config_file}")
         return config
     except Exception as e:
-        print(f"✗ Errore lettura configurazione: {e}")
+        logger.info(f"✗ Errore lettura configurazione: {e}")
         return None
 
 # ============================================================================
@@ -3617,10 +3663,10 @@ def load_config(config_file):
 
 def main():
     """Funzione principale"""
-    print("=" * 70)
-    print("PROXMOX LOCAL REPORT GENERATOR")
-    print("=" * 70)
-    print()
+    logger.info("=" * 70)
+    logger.info("PROXMOX LOCAL REPORT GENERATOR")
+    logger.info("=" * 70)
+    logger.info()
     
     # Parse argomenti
     parser = argparse.ArgumentParser(
@@ -3663,16 +3709,16 @@ def main():
     collect_perf = feature_enabled(features_config, 'collect_perf', False)
 
     if collect_containers:
-        print("⚠ Raccolta container non ancora implementata")
+        logger.info("⚠ Raccolta container non ancora implementata")
     if collect_perf:
-        print("⚠ Raccolta performance (pveperf) non ancora implementata")
+        logger.info("⚠ Raccolta performance (pveperf) non ancora implementata")
     
     if not codcli or not nomecliente:
-        print("⚠ ATTENZIONE: codcli o nomecliente non configurati")
-        print("  I file verranno generati localmente ma non caricati su server remoto")
+        logger.info("⚠ ATTENZIONE: codcli o nomecliente non configurati")
+        logger.info("  I file verranno generati localmente ma non caricati su server remoto")
         no_sftp = getattr(args, 'no_sftp', False) or getattr(args, 'no_scp', False)
         if not no_sftp:
-            print("  Configura codcli e nomecliente in config.json per abilitare upload SFTP")
+            logger.info("  Configura codcli e nomecliente in config.json per abilitare upload SFTP")
     
     # Directory output
     system_config = config.get('system', {})
@@ -3684,50 +3730,50 @@ def main():
     os.makedirs(csv_dir, exist_ok=True)
     os.makedirs(backup_dir, exist_ok=True)
     
-    print(f"→ Directory output: {output_dir}")
-    print()
+    logger.info(f"→ Directory output: {output_dir}")
+    logger.info()
     
     # Estrazione dati
-    print("=" * 70)
-    print("ESTRAZIONE DATI PROXMOX")
-    print("=" * 70)
-    print()
+    logger.info("=" * 70)
+    logger.info("ESTRAZIONE DATI PROXMOX")
+    logger.info("=" * 70)
+    logger.info()
     
     extractor = ProxmoxLocalExtractor(config, features_config)
     
     # Rileva modalità esecuzione
     execution_mode = extractor.detect_execution_mode()
-    print()
+    logger.info()
     
     # Se modalità SSH, connetti
     if execution_mode == 'ssh':
         if not extractor.connect_ssh():
-            print("✗ Impossibile connettersi via SSH, fallback all'API...")
+            logger.info("✗ Impossibile connettersi via SSH, fallback all'API...")
             extractor.execution_mode = 'api'
-        print()
+        logger.info()
     
     # Informazioni nodo
     extractor.get_node_info()
-    print()
+    logger.info()
     
     if collect_cluster:
         extractor.get_cluster_info()
     else:
-        print("→ Raccolta informazioni cluster disabilitata")
-    print()
+        logger.info("→ Raccolta informazioni cluster disabilitata")
+    logger.info()
     
     # Informazioni dettagliate host (da tutti i nodi del cluster via API)
     # IMPORTANTE: Usa sempre l'API anche in modalità locale per ottenere dati corretti di ogni nodo
-    print("→ Estrazione informazioni dettagliate da tutti gli host del cluster (via API)...")
+    logger.info("→ Estrazione informazioni dettagliate da tutti gli host del cluster (via API)...")
     all_hosts_info = extractor.get_all_hosts_info()
-    print()
+    logger.info()
     
     # Estrazione host/local storage/network se abilitato
     all_hosts_info = []
     if collect_host or collect_storage or collect_network or collect_host_details:
-        print("→ Estrazione informazioni host locali...")
+        logger.info("→ Estrazione informazioni host locali...")
         all_hosts_info = extractor.get_all_hosts_info()
-        print()
+        logger.info()
         if all_hosts_info and extractor.execution_mode != 'api' and (collect_network or collect_host_details):
             current_hostname = extractor.node_info.get('hostname')
             for host_info in all_hosts_info:
@@ -3735,8 +3781,8 @@ def main():
                     extractor.enrich_host_info_with_commands(host_info, extractor.execute_command)
                     break
     else:
-        print("→ Raccolta informazioni host disabilitata")
-        print()
+        logger.info("→ Raccolta informazioni host disabilitata")
+        logger.info()
     
     # Host principale per report
     if all_hosts_info:
@@ -3752,36 +3798,36 @@ def main():
     vms = []
     csv_file = None
     if collect_vms:
-        print("→ Estrazione VM da sistema...")
+        logger.info("→ Estrazione VM da sistema...")
         vms = extractor.get_vms_from_local()
-        print()
+        logger.info()
         if not vms:
-            print("⚠ Nessuna VM attiva trovata")
-            print("  ℹ Verifica:")
-            print("    - Sei su un host Proxmox?")
-            print("    - L'API Proxmox è raggiungibile?")
-            print("    - Ci sono VM in stato 'running'?")
-            print("  ℹ Il CSV verrà comunque generato con informazioni host")
+            logger.info("⚠ Nessuna VM attiva trovata")
+            logger.info("  ℹ Verifica:")
+            logger.info("    - Sei su un host Proxmox?")
+            logger.info("    - L'API Proxmox è raggiungibile?")
+            logger.info("    - Ci sono VM in stato 'running'?")
+            logger.info("  ℹ Il CSV verrà comunque generato con informazioni host")
         csv_base_filename = generate_filename(codcli, nomecliente, 'vms', 'csv', server_identifier=server_identifier)
         csv_file = os.path.join(csv_dir, csv_base_filename)
-        print("→ Rotazione file CSV VM...")
+        logger.info("→ Rotazione file CSV VM...")
         rotate_files(csv_dir, csv_base_filename, max_file_copies)
-        print("→ Salvataggio CSV VM...")
+        logger.info("→ Salvataggio CSV VM...")
         if extractor.save_to_csv(csv_file):
             if os.path.exists(csv_file):
                 file_size = os.path.getsize(csv_file) / 1024
-                print(f"✓ CSV VM salvato: {csv_file} ({file_size:.1f} KB)")
+                logger.info(f"✓ CSV VM salvato: {csv_file} ({file_size:.1f} KB)")
             else:
-                print("✗ File CSV non creato")
+                logger.info("✗ File CSV non creato")
                 sys.exit(1)
         else:
-            print("✗ Errore salvataggio CSV")
+            logger.info("✗ Errore salvataggio CSV")
             sys.exit(1)
-        print()
+        logger.info()
     else:
         extractor.vms_data = []
-        print("→ Raccolta VM disabilitata")
-        print()
+        logger.info("→ Raccolta VM disabilitata")
+        logger.info()
     
     # Report host/cluster
     host_report = extractor.create_host_cluster_report()
@@ -3789,10 +3835,10 @@ def main():
     
     # Verifica codcli e nomecliente
     if not codcli or not nomecliente:
-        print("✗ codcli o nomecliente non configurati in config.json")
-        print("  Configurazione richiesta:")
-        print("  - client.codcli")
-        print("  - client.nomecliente")
+        logger.info("✗ codcli o nomecliente non configurati in config.json")
+        logger.info("  Configurazione richiesta:")
+        logger.info("  - client.codcli")
+        logger.info("  - client.nomecliente")
         sys.exit(1)
     
     # Configurazione rotazione file
@@ -3803,53 +3849,53 @@ def main():
     csv_file = os.path.join(csv_dir, csv_base_filename)
     
     # Ruota file CSV VM esistenti
-    print("→ Rotazione file CSV VM...")
+    logger.info("→ Rotazione file CSV VM...")
     rotate_files(csv_dir, csv_base_filename, max_file_copies)
     
-    print("→ Salvataggio CSV VM...")
+    logger.info("→ Salvataggio CSV VM...")
     if extractor.save_to_csv(csv_file):
         if os.path.exists(csv_file):
             file_size = os.path.getsize(csv_file) / 1024
-            print(f"✓ CSV VM salvato: {csv_file} ({file_size:.1f} KB)")
+            logger.info(f"✓ CSV VM salvato: {csv_file} ({file_size:.1f} KB)")
         else:
-            print("✗ File CSV non creato")
+            logger.info("✗ File CSV non creato")
             sys.exit(1)
     else:
-        print("✗ Errore salvataggio CSV")
+        logger.info("✗ Errore salvataggio CSV")
         sys.exit(1)
     
-    print()
+    logger.info()
     
     # Salva CSV host dettagliato
     host_csv_file = os.path.join(csv_dir, generate_filename(codcli, nomecliente, 'hosts', 'csv', server_identifier=server_identifier))
     storage_file = None
     network_file = None
     
-    print("→ Salvataggio CSV host dettagliato...")
+    logger.info("→ Salvataggio CSV host dettagliato...")
     success, storage_file, network_file = extractor.save_host_info_to_csv(
         all_hosts_info, host_csv_file, codcli, nomecliente, max_file_copies, server_identifier=server_identifier
     )
     if success:
         if os.path.exists(host_csv_file):
             file_size = os.path.getsize(host_csv_file) / 1024
-            print(f"✓ CSV host salvato: {host_csv_file} ({file_size:.1f} KB)")
+            logger.info(f"✓ CSV host salvato: {host_csv_file} ({file_size:.1f} KB)")
         if storage_file and os.path.exists(storage_file):
             file_size = os.path.getsize(storage_file) / 1024
-            print(f"✓ CSV storage salvato: {storage_file} ({file_size:.1f} KB)")
+            logger.info(f"✓ CSV storage salvato: {storage_file} ({file_size:.1f} KB)")
         if network_file and os.path.exists(network_file):
             file_size = os.path.getsize(network_file) / 1024
-            print(f"✓ CSV network salvato: {network_file} ({file_size:.1f} KB)")
+            logger.info(f"✓ CSV network salvato: {network_file} ({file_size:.1f} KB)")
     else:
-        print("⚠ Errore salvataggio CSV host (continuo comunque)")
+        logger.info("⚠ Errore salvataggio CSV host (continuo comunque)")
     
-    print()
+    logger.info()
     
     # Backup configurazione (solo se locale o SSH)
     if extractor.execution_mode in ['local', 'ssh']:
-        print("=" * 70)
-        print("BACKUP CONFIGURAZIONE")
-        print("=" * 70)
-        print()
+        logger.info("=" * 70)
+        logger.info("BACKUP CONFIGURAZIONE")
+        logger.info("=" * 70)
+        logger.info()
         
         backup_manager = ProxmoxBackupIntegrated(config)
         backup_manager.execution_mode = extractor.execution_mode
@@ -3859,29 +3905,29 @@ def main():
             backup_file = backup_manager.get_backup_file()
         else:
             backup_file = None
-            print("⚠ Backup configurazione non creato")
+            logger.info("⚠ Backup configurazione non creato")
         
-        print()
+        logger.info()
     else:
         backup_file = None
-        print("→ Backup configurazione saltato (modalità API)")
-        print()
+        logger.info("→ Backup configurazione saltato (modalità API)")
+        logger.info()
     
     # Chiudi connessione SSH se aperta
     if extractor.ssh_client:
         extractor.ssh_client.close()
-        print("✓ Connessione SSH chiusa")
-        print()
+        logger.info("✓ Connessione SSH chiusa")
+        logger.info()
     
     # Upload SFTP
     no_sftp = getattr(args, 'no_sftp', False) or getattr(args, 'no_scp', False)
     sftp_config = config.get('sftp', config.get('scp', {}))  # Supporta sia 'sftp' che 'scp'
     
     if not no_sftp and sftp_config.get('enabled'):
-        print("=" * 70)
-        print("UPLOAD SFTP")
-        print("=" * 70)
-        print()
+        logger.info("=" * 70)
+        logger.info("UPLOAD SFTP")
+        logger.info("=" * 70)
+        logger.info()
         
         if codcli and nomecliente:
             sftp_uploader = SFTPUploader(config)
@@ -3903,47 +3949,47 @@ def main():
                 sftp_uploader.upload_files(files_to_upload, base_path)
                 sftp_uploader.close()
             else:
-                print("✗ Connessione SFTP fallita")
+                logger.info("✗ Connessione SFTP fallita")
         else:
-            print("⚠ codcli o nomecliente non configurati, skip upload SFTP")
+            logger.info("⚠ codcli o nomecliente non configurati, skip upload SFTP")
     else:
-        print("→ Upload SFTP disabilitato")
+        logger.info("→ Upload SFTP disabilitato")
     
     # Riepilogo
-    print()
-    print("=" * 70)
-    print("✓ PROCESSO COMPLETATO")
-    print("=" * 70)
-    print()
-    print("File generati:")
+    logger.info()
+    logger.info("=" * 70)
+    logger.info("✓ PROCESSO COMPLETATO")
+    logger.info("=" * 70)
+    logger.info()
+    logger.info("File generati:")
     if csv_file and os.path.exists(csv_file):
-        print(f"  📄 CSV VM:  {csv_file}")
+        logger.info(f"  📄 CSV VM:  {csv_file}")
     if collect_host and host_csv_file and os.path.exists(host_csv_file):
-        print(f"  📄 CSV Host:  {host_csv_file}")
+        logger.info(f"  📄 CSV Host:  {host_csv_file}")
     if collect_storage and storage_file and os.path.exists(storage_file):
-        print(f"  📄 CSV Storage:  {storage_file}")
+        logger.info(f"  📄 CSV Storage:  {storage_file}")
     if collect_network and network_file and os.path.exists(network_file):
-        print(f"  📄 CSV Network:  {network_file}")
+        logger.info(f"  📄 CSV Network:  {network_file}")
     if backup_file:
-        print(f"  📦 Backup: {backup_file}")
-    print()
-    print(f"Hostname: {host_report['hostname']}")
+        logger.info(f"  📦 Backup: {backup_file}")
+    logger.info()
+    logger.info(f"Hostname: {host_report['hostname']}")
     if server_identifier:
-        print(f"Server identifier: {server_identifier}")
+        logger.info(f"Server identifier: {server_identifier}")
     if collect_vms:
-        print(f"VM attive: {host_report['vms_active']}/{host_report['vms_count']}")
+        logger.info(f"VM attive: {host_report['vms_active']}/{host_report['vms_count']}")
     if collect_cluster and host_report['cluster_info']['is_cluster']:
-        print(f"Cluster: {host_report['cluster_info']['cluster_name']}")
-    print()
+        logger.info(f"Cluster: {host_report['cluster_info']['cluster_name']}")
+    logger.info()
 
 if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\n⚠ Operazione interrotta dall'utente")
+        logger.info("\n\n⚠ Operazione interrotta dall'utente")
         sys.exit(0)
     except Exception as e:
-        print(f"\n✗ Errore critico: {e}")
+        logger.info(f"\n✗ Errore critico: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
