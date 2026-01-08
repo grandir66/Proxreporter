@@ -1,0 +1,32 @@
+{
+    "proxmox": {
+        "enabled": true,
+        "host": "localhost",
+        "username": "",
+        "password": "",
+        "verify_ssl": false
+    },
+    "ssh": {
+        "enabled": false,
+        "host": "",
+        "port": 22,
+        "username": "",
+        "password": ""
+    },
+    "client": {
+        "codcli": "EXAMPLE",
+        "nomecliente": "Example Client",
+        "server_identifier": "pve-host"
+    },
+    "sftp": {
+        "enabled": true,
+        "host": "sftp.domarc.it",
+        "port": 11122,
+        "username": "proxmox",
+        "password": "INSERT_PASSWORD_HERE",
+        "base_path": "/home/proxmox/uploads"
+    },
+    "smtp": {
+        "enabled": false
+    }
+}
