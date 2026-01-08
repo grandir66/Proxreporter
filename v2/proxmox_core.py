@@ -24,6 +24,63 @@ import importlib
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Set
+import logging
+import time
+import fcntl
+import functools
+
+# Logging Configuration
+LOG_FILE_PATH = Path("/var/log/proxreporter/app.log")
+logger = logging.getLogger("proxreporter")
+
+def setup_logging(debug: bool = False, log_file: Path = LOG_FILE_PATH):
+    """Configura logging su file e console"""
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    # Console Handler
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.DEBUG if debug else logging.INFO)
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+    
+    # File Handler (Rotating manually or simple append for now, can use RotatingFileHandler)
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(log_file)
+        fh.setLevel(logging.DEBUG if debug else logging.INFO)
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
+    except PermissionError:
+        logger.info(f"⚠ W: Impossibile scrivere log in {log_file} (Permessi). Logging solo su console.")
+
+def retry(times=3, delay=5, backoff=2, exceptions=(Exception,)):
+    """Decorator per retry automatico con backoff esponenziale"""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            mtries, mdelay = times, delay
+            while mtries > 1:
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    logger.warning(f"Errore in {func.__name__}: {e}. Riprovo tra {mdelay}s... ({mtries-1} tentativi rimasti)")
+                    time.sleep(mdelay)
+                    mtries -= 1
+                    mdelay *= backoff
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+def acquire_lock(lock_file="/var/run/proxreporter.lock"):
+    """Acquisisce lock esclusivo per evitare esecuzioni multiple"""
+    lock_fd = open(lock_file, 'a+')
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return lock_fd
+    except IOError:
+        return None
 
 # Garantisci che si possa importare dal file principale
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -216,7 +273,7 @@ def create_notification_template(codcli: str, nomecliente: str, execution_mode: 
     try:
         if execution_mode == "ssh" and executor:
             # Modalità remota via SSH
-            print(f"→ Aggiornamento template notifica remoto: {template_file}")
+            logger.info(f"→ Aggiornamento template notifica remoto: {template_file}")
             # Crea la directory
             mkdir_result = executor(f"mkdir -p {template_dir} 2>/dev/null")
             # Crea il file usando heredoc per evitare problemi di escape
@@ -229,40 +286,40 @@ def create_notification_template(codcli: str, nomecliente: str, execution_mode: 
             check_cmd = f'test -f "{template_file}" && echo "OK" || echo "FAIL"'
             check_result = executor(check_cmd)
             if check_result and "OK" in check_result:
-                print(f"  ✓ Template notifica aggiornato con parametri cliente")
-                print(f"     Cliente: {nomecliente}")
-                print(f"     Codice: {codcli}")
+                logger.info(f"  ✓ Template notifica aggiornato con parametri cliente")
+                logger.info(f"     Cliente: {nomecliente}")
+                logger.info(f"     Codice: {codcli}")
             else:
-                print(f"  ⚠ Impossibile creare template remoto (verifica permessi root)")
+                logger.info(f"  ⚠ Impossibile creare template remoto (verifica permessi root)")
         elif execution_mode == "local":
             # Modalità locale
             template_path = Path(template_dir)
             template_file_path = template_path / "vzdump-subject.txt.hbs"
             
-            print(f"→ Aggiornamento template notifica: {template_file}")
+            logger.info(f"→ Aggiornamento template notifica: {template_file}")
             try:
                 # Crea la directory
                 template_path.mkdir(parents=True, exist_ok=True)
                 # Crea/aggiorna il file
                 with open(template_file_path, 'w', encoding='utf-8') as f:
                     f.write(template_content)
-                print(f"  ✓ Template notifica aggiornato con parametri cliente")
-                print(f"     Cliente: {nomecliente}")
-                print(f"     Codice: {codcli}")
+                logger.info(f"  ✓ Template notifica aggiornato con parametri cliente")
+                logger.info(f"     Cliente: {nomecliente}")
+                logger.info(f"     Codice: {codcli}")
             except PermissionError:
-                print(f"  ⚠ Impossibile creare template (richiesti permessi root per {template_dir})")
-                print(f"     Eseguire manualmente:")
-                print(f"     sudo mkdir -p {template_dir}")
-                print(f"     sudo tee {template_file} << 'EOF'")
-                print(template_content, end='')
-                print("EOF")
+                logger.info(f"  ⚠ Impossibile creare template (richiesti permessi root per {template_dir})")
+                logger.info(f"     Eseguire manualmente:")
+                logger.info(f"     sudo mkdir -p {template_dir}")
+                logger.info(f"     sudo tee {template_file} << 'EOF'")
+                logger.info(template_content)
+                logger.info("EOF")
             except Exception as e:
-                print(f"  ⚠ Errore creazione template: {e}")
+                logger.info(f"  ⚠ Errore creazione template: {e}")
         else:
             # Modalità API - non possiamo creare file localmente
-            print(f"  ℹ Template notifica non creato (modalità API, richiede accesso locale/SSH)")
+            logger.info(f"  ℹ Template notifica non creato (modalità API, richiede accesso locale/SSH)")
     except Exception as e:
-        print(f"  ⚠ Errore durante creazione template notifica: {e}")
+        logger.info(f"  ⚠ Errore durante creazione template notifica: {e}")
 
 
 def configure_smtp_notification(
@@ -297,14 +354,14 @@ def configure_smtp_notification(
     if not smtp_password:
         try:
             import getpass
-            print("  ℹ Password SMTP non disponibile")
-            print("     Inserire la password SMTP (premere Invio per saltare):")
+            logger.info("  ℹ Password SMTP non disponibile")
+            logger.info("     Inserire la password SMTP (premere Invio per saltare):")
             smtp_password = getpass.getpass("  Password SMTP: ").strip()
             if not smtp_password:
-                print("  ℹ Password SMTP non inserita, salto configurazione SMTP")
+                logger.info("  ℹ Password SMTP non inserita, salto configurazione SMTP")
                 return False
         except (KeyboardInterrupt, EOFError):
-            print("\n  ℹ Configurazione SMTP annullata")
+            logger.info("\n  ℹ Configurazione SMTP annullata")
             return False
     
     # Costruisci il from-address con il codice cliente
@@ -333,8 +390,8 @@ def configure_smtp_notification(
         return False
     
     if check_existing_config(execution_mode, executor):
-        print(f"  ℹ Notification target 'da-alert' già esistente")
-        print("     Non sovrascritto per preservare le impostazioni")
+        logger.info(f"  ℹ Notification target 'da-alert' già esistente")
+        logger.info("     Non sovrascritto per preservare le impostazioni")
         return True
     
     # Costruisci comando pvesh
@@ -346,8 +403,8 @@ def configure_smtp_notification(
     
     try:
         if execution_mode == "ssh" and executor:
-            print(f"→ Configurazione notification target 'da-alert' remota (pvesh)...")
-            print(f"  Comando: pvesh create /cluster/notifications/endpoints/smtp --name {target_name}")
+            logger.info(f"→ Configurazione notification target 'da-alert' remota (pvesh)...")
+            logger.info(f"  Comando: pvesh create /cluster/notifications/endpoints/smtp --name {target_name}")
             
             # Costruisci comando con parametri corretti (port come numero)
             pvesh_cmd = (
@@ -364,28 +421,28 @@ def configure_smtp_notification(
             
             result = executor(pvesh_cmd)
             if result:
-                print(f"  pvesh output: {result}")
+                logger.info(f"  pvesh output: {result}")
             
             # Verifica che il target sia stato creato
             check_cmd = f'pvesh get /cluster/notifications/endpoints/{target_name} 2>/dev/null && echo "OK" || echo "FAIL"'
             check_result = executor(check_cmd)
-            print(f"  Verifica target: {check_result}")
+            logger.info(f"  Verifica target: {check_result}")
             
             if check_result and "OK" in check_result:
-                print(f"  ✓ Notification target 'da-alert' creato con successo")
-                print(f"     (Target dedicato, non sovrascrive configurazioni esistenti)")
+                logger.info(f"  ✓ Notification target 'da-alert' creato con successo")
+                logger.info(f"     (Target dedicato, non sovrascrive configurazioni esistenti)")
                 return True
             else:
                 # Controlla se l'errore è "already exists"
                 if result and ("already exists" in result.lower() or "duplicate" in result.lower()):
-                    print(f"  ℹ Notification target 'da-alert' già esistente")
+                    logger.info(f"  ℹ Notification target 'da-alert' già esistente")
                     return True
-                print(f"  ✗ Impossibile verificare creazione target")
-                print(f"     Verifica permessi e che pvesh sia disponibile")
+                logger.info(f"  ✗ Impossibile verificare creazione target")
+                logger.info(f"     Verifica permessi e che pvesh sia disponibile")
                 return False
         elif execution_mode == "local":
-            print(f"→ Configurazione notification target 'da-alert' locale (pvesh)...")
-            print(f"  Comando: pvesh create /cluster/notifications/endpoints/smtp --name {target_name}")
+            logger.info(f"→ Configurazione notification target 'da-alert' locale (pvesh)...")
+            logger.info(f"  Comando: pvesh create /cluster/notifications/endpoints/smtp --name {target_name}")
             
             try:
                 # Esegui senza shell per passare correttamente i parametri come array
@@ -406,7 +463,7 @@ def configure_smtp_notification(
                 )
                 
                 if result.returncode == 0:
-                    print(f"  ✓ Comando pvesh eseguito con successo")
+                    logger.info(f"  ✓ Comando pvesh eseguito con successo")
                     
                     # Verifica che il target sia stato creato
                     verify_result = subprocess.run(
@@ -417,35 +474,35 @@ def configure_smtp_notification(
                     )
                     
                     if verify_result.returncode == 0:
-                        print(f"  ✓ Notification target 'da-alert' verificato")
-                        print(f"     (Target dedicato, non sovrascrive configurazioni esistenti)")
+                        logger.info(f"  ✓ Notification target 'da-alert' verificato")
+                        logger.info(f"     (Target dedicato, non sovrascrive configurazioni esistenti)")
                         return True
                     else:
-                        print(f"  ⚠ Target creato ma verifica fallita")
+                        logger.info(f"  ⚠ Target creato ma verifica fallita")
                         return True  # Considera comunque successo se il comando è andato a buon fine
                 else:
                     error_msg = result.stderr.strip() if result.stderr else result.stdout.strip()
                     if "already exists" in error_msg.lower() or "duplicate" in error_msg.lower():
-                        print(f"  ℹ Notification target 'da-alert' già esistente")
-                        print("     Non sovrascritto per preservare le impostazioni")
+                        logger.info(f"  ℹ Notification target 'da-alert' già esistente")
+                        logger.info("     Non sovrascritto per preservare le impostazioni")
                         return True
                     else:
-                        print(f"  ✗ Errore pvesh: {error_msg}")
+                        logger.info(f"  ✗ Errore pvesh: {error_msg}")
                         return False
             except FileNotFoundError:
-                print(f"  ✗ pvesh non trovato (Proxmox non installato o non in PATH)")
+                logger.info(f"  ✗ pvesh non trovato (Proxmox non installato o non in PATH)")
                 return False
             except subprocess.TimeoutExpired:
-                print(f"  ✗ Timeout durante esecuzione pvesh")
+                logger.info(f"  ✗ Timeout durante esecuzione pvesh")
                 return False
             except Exception as e:
-                print(f"  ✗ Errore esecuzione pvesh: {e}")
+                logger.info(f"  ✗ Errore esecuzione pvesh: {e}")
                 return False
         else:
-            print(f"  ℹ Configurazione SMTP non disponibile (modalità API)")
+            logger.info(f"  ℹ Configurazione SMTP non disponibile (modalità API)")
             return False
     except Exception as e:
-        print(f"  ⚠ Errore durante configurazione SMTP: {e}")
+        logger.info(f"  ⚠ Errore durante configurazione SMTP: {e}")
         return False
 
 
@@ -469,18 +526,18 @@ def configure_backup_jobs_notification(
         True se la configurazione è andata a buon fine, False altrimenti
     """
     try:
-        print()
-        print("=" * 70)
-        print("  CONFIGURAZIONE NOTIFICATION MATCHER PER BACKUP")
-        print("=" * 70)
-        print()
+        logger.info()
+        logger.info("=" * 70)
+        logger.info("  CONFIGURAZIONE NOTIFICATION MATCHER PER BACKUP")
+        logger.info("=" * 70)
+        logger.info()
         
         # Nome del matcher
         matcher_name = f"backup-matcher-{codcli}"
         
-        print(f"  Creazione notification matcher: {matcher_name}")
-        print(f"  Target: {target_name}")
-        print()
+        logger.info(f"  Creazione notification matcher: {matcher_name}")
+        logger.info(f"  Target: {target_name}")
+        logger.info()
         
         # Verifica se il matcher esiste già
         matcher_exists = False
@@ -501,8 +558,8 @@ def configure_backup_jobs_notification(
                 matcher_exists = False
         
         if matcher_exists:
-            print(f"  ℹ Notification matcher '{matcher_name}' già esistente")
-            print(f"    Eliminazione per ricrearlo...")
+            logger.info(f"  ℹ Notification matcher '{matcher_name}' già esistente")
+            logger.info(f"    Eliminazione per ricrearlo...")
             
             if execution_mode == "ssh" and executor:
                 delete_cmd = f"pvesh delete /cluster/notifications/matchers/{matcher_name} 2>&1"
@@ -519,7 +576,7 @@ def configure_backup_jobs_notification(
         
         # Crea il notification matcher per i backup job
         # Match field format: exact:type=vzdump per catturare tutti i backup
-        print(f"  → Creazione matcher per tutti i backup job...")
+        logger.info(f"  → Creazione matcher per tutti i backup job...")
         
         if execution_mode == "ssh" and executor:
             # Crea matcher che cattura tutti i backup vzdump
@@ -550,24 +607,24 @@ def configure_backup_jobs_notification(
                 )
                 success = result.returncode == 0
                 if not success and result.stderr:
-                    print(f"    Output: {result.stderr}")
+                    logger.info(f"    Output: {result.stderr}")
             except Exception as e:
-                print(f"    Errore: {e}")
+                logger.info(f"    Errore: {e}")
                 success = False
         
         if not success:
-            print(f"  ✗ Errore nella creazione del matcher")
+            logger.info(f"  ✗ Errore nella creazione del matcher")
             return False
         
-        print(f"  ✓ Notification matcher creato con successo")
-        print()
-        print(f"  Il matcher cattura automaticamente:")
-        print(f"    • Tutti i job di tipo 'vzdump' (backup)")
-        print(f"    • Invia notifiche al target: {target_name}")
-        print()
+        logger.info(f"  ✓ Notification matcher creato con successo")
+        logger.info()
+        logger.info(f"  Il matcher cattura automaticamente:")
+        logger.info(f"    • Tutti i job di tipo 'vzdump' (backup)")
+        logger.info(f"    • Invia notifiche al target: {target_name}")
+        logger.info()
         
         # Raccoglie email dai backup job esistenti per aggiungerle al target
-        print(f"  → Raccolta email dai backup job esistenti...")
+        logger.info(f"  → Raccolta email dai backup job esistenti...")
         all_emails = set()
         
         if execution_mode == "ssh" and executor:
@@ -607,8 +664,8 @@ def configure_backup_jobs_notification(
         
         # Aggiorna il target con tutte le email raccolte
         if all_emails:
-            print(f"  Email trovate nei backup jobs: {', '.join(sorted(all_emails))}")
-            print(f"  → Aggiunta al notification target...")
+            logger.info(f"  Email trovate nei backup jobs: {', '.join(sorted(all_emails))}")
+            logger.info(f"  → Aggiunta al notification target...")
             
             # Recupera mailto attuale del target
             if execution_mode == "ssh" and executor:
@@ -669,30 +726,30 @@ def configure_backup_jobs_notification(
                     mailto_success = False
             
             if mailto_success:
-                print(f"  ✓ Email aggiunte al target")
+                logger.info(f"  ✓ Email aggiunte al target")
                 for email in sorted(all_emails):
-                    print(f"    • {email}")
+                    logger.info(f"    • {email}")
             else:
-                print(f"  ⚠ Possibile errore nell'aggiornamento delle email")
+                logger.info(f"  ⚠ Possibile errore nell'aggiornamento delle email")
             
-            print()
+            logger.info()
         else:
-            print(f"  ℹ Nessuna email trovata nei backup job esistenti")
-            print()
+            logger.info(f"  ℹ Nessuna email trovata nei backup job esistenti")
+            logger.info()
         
-        print("=" * 70)
-        print(f"  ✓ CONFIGURAZIONE COMPLETATA")
-        print(f"    Notification matcher: {matcher_name}")
-        print(f"    Target: {target_name}")
+        logger.info("=" * 70)
+        logger.info(f"  ✓ CONFIGURAZIONE COMPLETATA")
+        logger.info(f"    Notification matcher: {matcher_name}")
+        logger.info(f"    Target: {target_name}")
         if all_emails:
-            print(f"    Email nel target: {len(all_emails)}")
-        print("=" * 70)
-        print()
+            logger.info(f"    Email nel target: {len(all_emails)}")
+        logger.info("=" * 70)
+        logger.info()
         
         return True
         
     except Exception as e:
-        print(f"  ⚠ Errore durante configurazione backup jobs: {e}")
+        logger.info(f"  ⚠ Errore durante configurazione backup jobs: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -725,24 +782,24 @@ def attempt_sftp_upload(uploader: SFTPUploader, files: List[str]) -> bool:
         if (host_try, port_try) in tried:
             continue
         tried.add((host_try, port_try))
-        print(f"→ Tentativo upload SFTP {host_try}:{port_try}")
+        logger.info(f"→ Tentativo upload SFTP {host_try}:{port_try}")
         sftp_conf["host"] = host_try
         sftp_conf["port"] = port_try
         try:
             if uploader.connect():
                 uploader.upload_files(files, base_path)
                 uploader.close()
-                print("✓ Upload SFTP completato")
+                logger.info("✓ Upload SFTP completato")
                 return True
         except Exception as exc:
-            print(f"   ⚠ Upload fallito su {host_try}:{port_try}: {exc}")
+            logger.info(f"   ⚠ Upload fallito su {host_try}:{port_try}: {exc}")
         finally:
             try:
                 uploader.close()
             except Exception:
                 pass
 
-    print("✗ Tutti i tentativi di upload SFTP sono falliti")
+    logger.info("✗ Tutti i tentativi di upload SFTP sono falliti")
     if original_host is not None:
         sftp_conf["host"] = original_host
     if original_port is not None:
@@ -836,11 +893,11 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
 
     extractor = ProxmoxLocalExtractor(config, features_config)
     execution_mode = extractor.detect_execution_mode()
-    print()
+    logger.info()
 
     if execution_mode == "ssh":
         if not extractor.connect_ssh():
-            print("✗ Connessione SSH fallita, impossibile procedere")
+            logger.info("✗ Connessione SSH fallita, impossibile procedere")
             sys.exit(1)
 
     # Crea il template di notifica per i backup
@@ -849,8 +906,8 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
     
     # Configura SMTP per le notifiche (se password disponibile)
     if execution_mode in ("local", "ssh") and executor:
-        print()
-        print("→ Configurazione SMTP automatica...")
+        logger.info()
+        logger.info("→ Configurazione SMTP automatica...")
         # Cerca password nel config prima di usare DEFAULT_SMTP_PASSWORD
         smtp_password = None
         if config:
@@ -860,9 +917,9 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
             smtp_password = DEFAULT_SMTP_PASSWORD
         
         if smtp_password:
-            print(f"  Password SMTP: {'*' * len(smtp_password)} (configurata)")
+            logger.info(f"  Password SMTP: {'*' * len(smtp_password)} (configurata)")
         else:
-            print(f"  Password SMTP: non configurata (verrà richiesta)")
+            logger.info(f"  Password SMTP: non configurata (verrà richiesta)")
         
         # Crea il notification target
         target_created = configure_smtp_notification(smtp_password, codcli, execution_mode, executor, config)
@@ -872,23 +929,23 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
             target_name = f"da-alert-{codcli}"
             configure_backup_jobs_notification(target_name, codcli, execution_mode, executor)
     else:
-        print()
-        print("  ℹ Configurazione SMTP saltata (modalità API o executor non disponibile)")
+        logger.info()
+        logger.info("  ℹ Configurazione SMTP saltata (modalità API o executor non disponibile)")
     
-    print()
+    logger.info()
 
-    print("→ Estrazione informazioni nodo...")
+    logger.info("→ Estrazione informazioni nodo...")
     extractor.get_node_info()
     detected_identifier = extractor.node_info.get("hostname") or server_identifier
     server_identifier = detected_identifier
-    print()
+    logger.info()
 
     collect_cluster = feature_enabled(features_config, "collect_cluster", True)
     if collect_cluster:
         extractor.get_cluster_info()
     else:
-        print("→ Raccolta informazioni cluster disabilitata")
-    print()
+        logger.info("→ Raccolta informazioni cluster disabilitata")
+    logger.info()
 
     system_conf = config.get("system", {})
     csv_dir = Path(system_conf.get("csv_directory", output_dir / "csv"))
@@ -909,7 +966,7 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
             filtered = [host for host in all_hosts_info if host.get("hostname") == current_hostname]
             if filtered:
                 all_hosts_info = filtered
-        print()
+        logger.info()
         if all_hosts_info and execution_mode != "api" and (collect_host_details or collect_network):
             for host_info in all_hosts_info:
                 if host_info.get("hostname") == current_hostname:
@@ -918,8 +975,8 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
                         augment_local_host_details(host_info, extractor)
                     break
     else:
-        print("→ Raccolta informazioni host disabilitata")
-        print()
+        logger.info("→ Raccolta informazioni host disabilitata")
+        logger.info()
 
     if collect_storage and all_hosts_info:
         current_hostname = extractor.node_info.get("hostname")
@@ -929,7 +986,7 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
                     if extractor.execution_mode in ("local", "ssh"):
                         populate_storage_via_pvesm(host_info, extractor.execute_command)
                     else:
-                        print("  ℹ Impossibile usare pvesm in modalità API pura")
+                        logger.info("  ℹ Impossibile usare pvesm in modalità API pura")
 
     detailed_host_info = all_hosts_info[0] if all_hosts_info else {}
     if not detailed_host_info and (collect_host or collect_host_details):
@@ -942,7 +999,7 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
     csv_file: Optional[str] = None
     if collect_vms:
         vms = get_full_vm_details(extractor, config, execution_mode)
-        print()
+        logger.info()
         csv_file_path = write_vms_csv(
             vms,
             csv_dir,
@@ -952,16 +1009,16 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
             int(system_conf.get("max_file_copies", 5)),
         )
         if csv_file_path:
-            print(f"✓ CSV VM salvato: {csv_file_path}")
+            logger.info(f"✓ CSV VM salvato: {csv_file_path}")
             csv_file = str(csv_file_path)
         else:
-            print("✗ Errore salvataggio CSV VM")
+            logger.info("✗ Errore salvataggio CSV VM")
             sys.exit(1)
-        print()
+        logger.info()
     else:
         extractor.vms_data = []
-        print("→ Raccolta VM disabilitata")
-        print()
+        logger.info("→ Raccolta VM disabilitata")
+        logger.info()
 
     host_csv_file: Optional[str] = None
     storage_csv_file: Optional[str] = None
@@ -976,15 +1033,15 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
             network_csv_file = write_network_csv(all_hosts_info, csv_dir, codcli, nomecliente, server_identifier, max_copies)
 
         if collect_host and host_csv_file and Path(host_csv_file).exists():
-            print(f"✓ CSV host salvato: {host_csv_file}")
+            logger.info(f"✓ CSV host salvato: {host_csv_file}")
         if collect_storage and storage_csv_file and storage_csv_file and Path(storage_csv_file).exists():
-            print(f"✓ CSV storage salvato: {storage_csv_file}")
+            logger.info(f"✓ CSV storage salvato: {storage_csv_file}")
         if collect_network and network_csv_file and network_csv_file and Path(network_csv_file).exists():
-            print(f"✓ CSV network salvato: {network_csv_file}")
-        print()
+            logger.info(f"✓ CSV network salvato: {network_csv_file}")
+        logger.info()
     else:
-        print("→ Raccolta CSV host/storage/network disabilitata")
-        print()
+        logger.info("→ Raccolta CSV host/storage/network disabilitata")
+        logger.info()
 
     backup_file: Optional[str] = None
     collect_backup = feature_enabled(features_config, "collect_backup", True)
@@ -994,19 +1051,19 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
         backup_manager.ssh_client = extractor.ssh_client
         if backup_manager.create_backup(str(backup_dir), codcli, nomecliente, int(system_conf.get("max_file_copies", 5)), server_identifier):
             backup_file = backup_manager.backup_file
-        print()
+        logger.info()
     else:
         if not collect_backup:
-            print("→ Backup disabilitato dalle feature")
+            logger.info("→ Backup disabilitato dalle feature")
         else:
-            print("→ Backup non disponibile in modalità API")
-        print()
+            logger.info("→ Backup non disponibile in modalità API")
+        logger.info()
 
     if extractor.ssh_client:
         extractor.ssh_client.close()
         extractor.ssh_client = None
-        print("✓ Connessione SSH chiusa")
-        print()
+        logger.info("✓ Connessione SSH chiusa")
+        logger.info()
 
     if not no_upload and config.get("sftp", {}).get("enabled"):
         uploader = SFTPUploader(config)
@@ -1023,26 +1080,26 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
             files.append(backup_file)
         if files:
             attempt_sftp_upload(uploader, files)
-        print()
+        logger.info()
     else:
-        print("→ Upload SFTP disabilitato")
-        print()
+        logger.info("→ Upload SFTP disabilitato")
+        logger.info()
 
-    print("=" * 70)
-    print("✓ REPORT COMPLETATO")
-    print("=" * 70)
-    print("File generati:")
+    logger.info("=" * 70)
+    logger.info("✓ REPORT COMPLETATO")
+    logger.info("=" * 70)
+    logger.info("File generati:")
     if csv_file and Path(csv_file).exists():
-        print(f"  📄 CSV VM:  {csv_file}")
+        logger.info(f"  📄 CSV VM:  {csv_file}")
     if collect_host and host_csv_file and Path(host_csv_file).exists():
-        print(f"  📄 CSV Host:  {host_csv_file}")
+        logger.info(f"  📄 CSV Host:  {host_csv_file}")
     if collect_storage and storage_csv_file and storage_csv_file and Path(storage_csv_file).exists():
-        print(f"  📄 CSV Storage:  {storage_csv_file}")
+        logger.info(f"  📄 CSV Storage:  {storage_csv_file}")
     if collect_network and network_csv_file and network_csv_file and Path(network_csv_file).exists():
-        print(f"  📄 CSV Network:  {network_csv_file}")
+        logger.info(f"  📄 CSV Network:  {network_csv_file}")
     if collect_backup and backup_file and Path(backup_file).exists():
-        print(f"  📦 Backup: {backup_file}")
-    print()
+        logger.info(f"  📦 Backup: {backup_file}")
+    logger.info()
 
 
 # ---------------------------------------------------------------------------
@@ -1084,12 +1141,12 @@ def populate_storage_via_pvesm(host_info: Dict[str, Any], executor) -> None:
     try:
         raw_output = executor("pvesm status 2>/dev/null")
         if not raw_output:
-            print("      ℹ pvesm status non ha restituito output (verifica PATH e permessi)")
+            logger.info("      ℹ pvesm status non ha restituito output (verifica PATH e permessi)")
             return
         
         storage_data = _parse_pvesm_text(raw_output)
         if not storage_data:
-            print("      ℹ Nessun dato storage restituito da pvesm")
+            logger.info("      ℹ Nessun dato storage restituito da pvesm")
             return
         
         storages: List[Dict[str, Any]] = []
@@ -1109,9 +1166,9 @@ def populate_storage_via_pvesm(host_info: Dict[str, Any], executor) -> None:
         
         if storages:
             host_info["storage"] = storages
-            print(f"  → Storage locale via pvesm: {len(storages)} elementi")
+            logger.info(f"  → Storage locale via pvesm: {len(storages)} elementi")
     except Exception as exc:
-        print(f"      ⚠ Errore raccolta storage via pvesm: {exc}")
+        logger.info(f"      ⚠ Errore raccolta storage via pvesm: {exc}")
 
 
 def _parse_pvesm_text(raw_output: str) -> List[Dict[str, Any]]:
@@ -1202,10 +1259,10 @@ def _run_pvesh_json(extractor: ProxmoxLocalExtractor, endpoint: str, timeout: in
     except FileNotFoundError:
         return None
     except (json.JSONDecodeError, subprocess.SubprocessError) as exc:
-        print(f"  ⚠ Errore pvesh {endpoint}: {exc}")
+        logger.info(f"  ⚠ Errore pvesh {endpoint}: {exc}")
         return None
     except Exception as exc:
-        print(f"  ⚠ Errore imprevisto pvesh {endpoint}: {exc}")
+        logger.info(f"  ⚠ Errore imprevisto pvesh {endpoint}: {exc}")
         return None
 
 
@@ -2286,7 +2343,7 @@ def get_full_vm_details(extractor: ProxmoxLocalExtractor, config: Dict[str, Any]
     - se API abilitate: usa pvesh per config/status/agent/snapshot
     - altrimenti usa qm config/status e file locali
     """
-    print("→ Estrazione dettagliata VM (pvesh)")
+    logger.info("→ Estrazione dettagliata VM (pvesh)")
     vms: List[Dict[str, Any]] = []
 
     target_node_aliases: Set[str] = set()
@@ -2297,11 +2354,11 @@ def get_full_vm_details(extractor: ProxmoxLocalExtractor, config: Dict[str, Any]
 
     nodes_data = _run_pvesh_json(extractor, "/nodes")
     if not nodes_data:
-        print("  ⚠ pvesh non disponibile, uso fallback dati base")
+        logger.info("  ⚠ pvesh non disponibile, uso fallback dati base")
         try:
             base_vms = extractor.get_vms_from_local()
         except Exception as exc:
-            print(f"✗ Errore raccolta VM: {exc}")
+            logger.info(f"✗ Errore raccolta VM: {exc}")
             return []
         filtered_base_vms = [
             vm
@@ -2318,11 +2375,11 @@ def get_full_vm_details(extractor: ProxmoxLocalExtractor, config: Dict[str, Any]
         if not node_name:
             continue
         if target_node_aliases and not _node_matches_target(node_name, target_node_aliases):
-            print(f"  → Nodo {node_name}: ignorato (fuori dall'host corrente)")
+            logger.info(f"  → Nodo {node_name}: ignorato (fuori dall'host corrente)")
             continue
 
         vm_list = _run_pvesh_json(extractor, f"/nodes/{node_name}/qemu") or []
-        print(f"  → Nodo {node_name}: {len(vm_list or [])} VM")
+        logger.info(f"  → Nodo {node_name}: {len(vm_list or [])} VM")
         for vm_summary in vm_list or []:
             if not isinstance(vm_summary, dict):
                 continue
@@ -2336,14 +2393,14 @@ def get_full_vm_details(extractor: ProxmoxLocalExtractor, config: Dict[str, Any]
                 vm_record = _collect_vm_record(extractor, node_name, vm_summary)
                 vms.append(_finalize_vm_record(vm_record))
             except Exception as exc:
-                print(f"    ⚠ Errore dettagli VM {node_name}/{vmid}: {exc}")
+                logger.info(f"    ⚠ Errore dettagli VM {node_name}/{vmid}: {exc}")
 
     if not vms:
-        print("  ⚠ Nessuna VM trovata via pvesh, uso fallback")
+        logger.info("  ⚠ Nessuna VM trovata via pvesh, uso fallback")
         try:
             base_vms = extractor.get_vms_from_local()
         except Exception as exc:
-            print(f"✗ Errore fallback VM: {exc}")
+            logger.info(f"✗ Errore fallback VM: {exc}")
             return []
         filtered_base_vms = [
             vm
@@ -2377,7 +2434,7 @@ def write_vms_csv(
                 writer.writerow(row)
         return filepath
     except Exception as exc:
-        print(f"✗ Errore salvataggio CSV VM: {exc}")
+        logger.info(f"✗ Errore salvataggio CSV VM: {exc}")
         return None
 
 
@@ -2398,7 +2455,7 @@ def write_host_csv(
         # Se non ha già i dati licenza, prova ad estrarli
         if not host.get("license_status"):
             try:
-                print(f"  → [CSV] Tentativo estrazione licenza per {hostname}")
+                logger.info(f"  → [CSV] Tentativo estrazione licenza per {hostname}")
                 # Esegui comando pvesubscription get
                 result = subprocess.run(
                     ["pvesubscription", "get"],
@@ -2407,7 +2464,7 @@ def write_host_csv(
                     timeout=5
                 )
                 if result.returncode == 0 and result.stdout:
-                    print(f"  → [CSV] Output pvesubscription ricevuto ({len(result.stdout)} caratteri)")
+                    logger.info(f"  → [CSV] Output pvesubscription ricevuto ({len(result.stdout)} caratteri)")
                     sub_data = {}
                     for line in result.stdout.splitlines():
                         line = line.strip()
@@ -2417,10 +2474,10 @@ def write_host_csv(
                             value = value.strip()
                             sub_data[key] = value
                     
-                    print(f"  → [CSV] Parsed {len(sub_data)} campi subscription per {hostname}")
+                    logger.info(f"  → [CSV] Parsed {len(sub_data)} campi subscription per {hostname}")
                     if sub_data.get('status'):
                         host['license_status'] = sub_data['status']
-                        print(f"  → [CSV] license_status: {sub_data['status']}")
+                        logger.info(f"  → [CSV] license_status: {sub_data['status']}")
                     if sub_data.get('level'):
                         host['license_level'] = sub_data['level']
                     if sub_data.get('productname'):
@@ -2434,11 +2491,11 @@ def write_host_csv(
                     if sub_data.get('nextduedate'):
                         host['subscription_next_due'] = sub_data['nextduedate']
                 else:
-                    print(f"  ⚠ [CSV] pvesubscription get non ha restituito output per {hostname}")
+                    logger.info(f"  ⚠ [CSV] pvesubscription get non ha restituito output per {hostname}")
             except Exception as e:
-                print(f"  ⚠ [CSV] Errore estrazione licenza per {hostname}: {e}")
+                logger.info(f"  ⚠ [CSV] Errore estrazione licenza per {hostname}: {e}")
         else:
-            print(f"  ✓ [CSV] Licenza già estratta per {hostname}: {host.get('license_status')}")
+            logger.info(f"  ✓ [CSV] Licenza già estratta per {hostname}: {host.get('license_status')}")
     
     records = [_finalize_host_record(host, server_identifier) for host in hosts]
     if not records:
@@ -2462,7 +2519,7 @@ def write_host_csv(
                 writer.writerow(row)
         return filepath
     except Exception as exc:
-        print(f"✗ Errore salvataggio CSV host: {exc}")
+        logger.info(f"✗ Errore salvataggio CSV host: {exc}")
         return None
 
 
@@ -2535,7 +2592,7 @@ def write_storage_csv(
                 )
         return filepath
     except Exception as exc:
-        print(f"✗ Errore salvataggio CSV storage: {exc}")
+        logger.info(f"✗ Errore salvataggio CSV storage: {exc}")
         return None
 
 
@@ -2641,7 +2698,7 @@ def write_network_csv(
                 )
         return filepath
     except Exception as exc:
-        print(f"✗ Errore salvataggio CSV network: {exc}")
+        logger.info(f"✗ Errore salvataggio CSV network: {exc}")
         return None
 
 
@@ -2678,7 +2735,7 @@ def main() -> None:
 
     if remote_enabled:
         if not api_username or not api_password:
-            print("✗ Per l'accesso remoto specifica sia --username che --password")
+            logger.info("✗ Per l'accesso remoto specifica sia --username che --password")
             sys.exit(1)
         api_host = remote_host_arg if ":" in remote_host_arg else f"{remote_host_arg}:8006"
         ssh_host = remote_host_arg.split(":")[0]
@@ -2720,7 +2777,7 @@ def main() -> None:
     
     if config_path and os.path.exists(config_path):
         try:
-            print(f"→ Caricamento configurazione da: {config_path}")
+            logger.info(f"→ Caricamento configurazione da: {config_path}")
             with open(config_path, "r") as f:
                 file_config = json.load(f)
             
@@ -2745,19 +2802,39 @@ def main() -> None:
                 config["smtp"] = file_config["smtp"]
 
         except Exception as e:
-            print(f"⚠ Errore caricamento config file: {e}")
+            logger.info(f"⚠ Errore caricamento config file: {e}")
 
 
-    print("=" * 70)
-    print("PROXMOX LOCAL REPORTER (CRON)")
-    print("=" * 70)
+    logger.info("=" * 70)
+    logger.info("PROXMOX LOCAL REPORTER (CRON)")
+    logger.info("=" * 70)
+    
+    # Init Logging
+    setup_logging(debug=False, log_file=Path(args.output_dir) / "proxreporter.log") # Use output dir for log if var log not writable or argument based?
+    # Better: default to /var/log/proxreporter/app.log, fallback to output_dir/app.log?
+    # For now let's use the function default but respect permissions.
+    
+    # Lock Check
+    lock_fd = acquire_lock()
+    if not lock_fd:
+        logger.error("Altra istanza in esecuzione. Esco.")
+        sys.exit(1)
+        
+    logger.info("=== Start Execution ===")
+    
     target_desc = ssh_host if remote_enabled else local_hostname
-    print(f"→ Target Proxmox: {target_desc} ({'remoto' if remote_enabled else 'locale'})")
-    print(f"→ Output directory: {output_dir}")
-    print(f"→ Timestamp: {datetime.now():%Y-%m-%d %H:%M:%S}")
-    print()
+    logger.info(f"Target Proxmox: {target_desc} ({'remoto' if remote_enabled else 'locale'})")
+    logger.info(f"Output directory: {output_dir}")
+    logger.info() # Keep some visual separation in stdout? Or just rely on logger
 
-    run_report(config, args.codcli, args.nomecliente, server_identifier, output_dir, args.no_upload)
+    try:
+        run_report(config, args.codcli, args.nomecliente, server_identifier, output_dir, args.no_upload)
+    except Exception as e:
+        logger.exception("Errore fatale durante l'esecuzione")
+        sys.exit(1)
+    finally:
+        logger.info("=== End Execution ===")
+
 
 
 if __name__ == "__main__":
@@ -2766,25 +2843,25 @@ if __name__ == "__main__":
     if "--auto-update" in args_prelim and "--skip-update" not in args_prelim:
         update_script = Path(__file__).resolve().parent / "update_scripts.py"
         if update_script.exists():
-            print("→ Verifica aggiornamenti script...")
+            logger.info("→ Verifica aggiornamenti script...")
             try:
                 result = subprocess.run([sys.executable, str(update_script)], check=False)
                 if result.returncode == 0:
-                    print("→ Riavvio script con versione aggiornata...\n")
+                    logger.info("→ Riavvio script con versione aggiornata...\n")
                     # Ri-esegui lo stesso comando (senza --auto-update per evitare loop)
                     new_args = [arg for arg in sys.argv if arg != "--auto-update"]
                     new_args.append("--skip-update")
                     os.execv(sys.executable, [sys.executable] + new_args)
             except Exception as e:
-                print(f"⚠ Errore durante auto-update: {e}")
-                print("→ Continuo con la versione corrente...\n")
+                logger.info(f"⚠ Errore durante auto-update: {e}")
+                logger.info("→ Continuo con la versione corrente...\n")
     
     try:
         main()
     except KeyboardInterrupt:
-        print("\n✋ Operazione interrotta dall'utente")
+        logger.info("\n✋ Operazione interrotta dall'utente")
         sys.exit(0)
     except Exception as exc:
-        print(f"\n✗ Errore critico: {exc}")
+        logger.info(f"\n✗ Errore critico: {exc}")
         raise
 
