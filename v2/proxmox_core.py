@@ -241,7 +241,7 @@ SFTP_ENABLED_DEFAULT = True
 SFTP_HOST_DEFAULT = "sftp.domarc.it"
 SFTP_PORT_DEFAULT = 11122
 SFTP_USERNAME_DEFAULT = "proxmox"
-# SFTP_PASSWORD rimosso - deve essere caricato da config.json
+# SFTP_PASSWORD must be loaded from config
 SFTP_BASE_PATH_DEFAULT = "/home/proxmox/uploads"
 SFTP_FALLBACK_HOST = "192.168.20.14"
 
@@ -325,8 +325,8 @@ DEFAULT_SMTP_USER = "smtp.domarc"
 DEFAULT_SMTP_ENCRYPTION = "starttls"
 DEFAULT_FROM_ADDRESS = "px-@domarc.it"
 DEFAULT_RECIPIENT = "domarcsrl+pxbackup@mycheckcentral.cc"
-# Password SMTP - lasciare vuoto se non disponibile (verrà chiesta o saltata)
-DEFAULT_SMTP_PASSWORD = "***REMOVED***"
+# Password SMTP - lasciare vuoto
+DEFAULT_SMTP_PASSWORD = ""
 
 
 def create_notification_template(codcli: str, nomecliente: str, execution_mode: str, executor=None) -> None:
