@@ -39,7 +39,9 @@ fi
 if [ -d "$INSTALL_DIR/.git" ]; then
     echo "→ Updating existing installation in $INSTALL_DIR..."
     cd "$INSTALL_DIR"
-    git pull origin $BRANCH
+    # Force reset to ensure we have the very latest code and clean state
+    git fetch origin
+    git reset --hard origin/$BRANCH
 else
     echo "→ Cloning repository to $INSTALL_DIR..."
     mkdir -p "$INSTALL_DIR"
@@ -50,6 +52,7 @@ fi
 echo "→ Running Python Setup..."
 cd "$INSTALL_DIR/v2" || { echo -e "${RED}Directory v2 not found!${NC}"; exit 1; }
 
+# Execute setup.py using the system python3
 # Execute setup.py using the system python3
 python3 setup.py
 

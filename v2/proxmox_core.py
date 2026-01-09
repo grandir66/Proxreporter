@@ -29,6 +29,20 @@ import time
 import fcntl
 import functools
 
+# Custom modules
+try:
+    from html_generator import HTMLReporter
+    from email_sender import EmailSender
+except ImportError:
+    # Gestione import se eseguiti come script standalone o modulo
+    if __name__ == "__main__":
+        # Aggiungi current dir e riprova
+        sys.path.append(str(Path(__file__).resolve().parent))
+        from html_generator import HTMLReporter
+        from email_sender import EmailSender
+    else:
+        raise
+
 # Logging Configuration
 LOG_FILE_PATH = Path("/var/log/proxreporter/app.log")
 logger = logging.getLogger("proxreporter")
@@ -1084,6 +1098,62 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
     else:
         logger.info("→ Upload SFTP disabilitato")
         logger.info()
+
+    # -----------------------------------------------------------------------
+    # HTML REPORT & EMAIL
+    # -----------------------------------------------------------------------
+    logger.info("=" * 70)
+    logger.info("GENERAZIONE REPORT HTML")
+    logger.info("=" * 70)
+    
+    html_file = output_dir / f"{codcli}_{nomecliente}_report.html"
+    
+    # Prepare data for template
+    report_data = {
+        "client": {
+            "codcli": codcli,
+            "nomecliente": nomecliente,
+            "server_identifier": server_identifier
+        },
+        "cluster": extractor.cluster_info,
+        "hosts": all_hosts_info,
+        "vms": vms
+    }
+    
+    html_reporter = HTMLReporter(template_dir=CURRENT_DIR / "templates")
+    html_generated = html_reporter.generate_report(report_data, str(html_file))
+    
+    if html_generated:
+        logger.info(f"  📄 HTML Report: {html_file}")
+        
+        # Email Sending
+        smtp_config = config.get("smtp", {})
+        if smtp_config.get("enabled"):
+            logger.info("=" * 70)
+            logger.info("INVIO EMAIL")
+            logger.info("=" * 70)
+            
+            email_sender = EmailSender(config)
+            subject = f"Proxmox Report - {nomecliente} ({codcli})"
+            
+            # Attachments list
+            attachments = []
+            if html_file.exists():
+                attachments.append(str(html_file))
+            
+            # Read HTML content for body
+            try:
+                with open(html_file, "r") as f:
+                    html_body = f.read()
+                    
+                if email_sender.send_report(html_body, subject, attachments=attachments):
+                     pass # Logged inside sender
+            except Exception as e:
+                logger.error(f"Errore preparazione email: {e}")
+        else:
+             logger.info("→ Invio email disabilitato (smtp.enabled=false o assente)")
+    else:
+        logger.warning("⚠ impossibile generare report HTML")
 
     logger.info("=" * 70)
     logger.info("✓ REPORT COMPLETATO")
