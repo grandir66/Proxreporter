@@ -17,10 +17,25 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 
+def robust_input(prompt_text: str) -> str:
+    """Legge input da stdin, con fallback su /dev/tty se stdin è chiuso (pipe)."""
+    try:
+        return input(prompt_text)
+    except EOFError:
+        # Se siamo in pipe (wget | bash), stdin è chiuso. Usiamo tty.
+        try:
+            with open("/dev/tty", "r") as tty:
+                print(prompt_text, end="", flush=True)
+                return tty.readline().rstrip("\n")
+        except OSError:
+            print("\n✗ Errore: impossibile leggere input (stdin chiuso e tty non disponibile).")
+            print("  Esegui lo script interattivamente o senza pipe.")
+            sys.exit(1)
+
 def prompt(label: str, default: Optional[str] = None, required: bool = True) -> str:
     while True:
         suffix = f" [{default}]" if default else ""
-        value = input(f"{label}{suffix}: ").strip()
+        value = robust_input(f"{label}{suffix}: ").strip()
         if not value and default is not None:
             value = default
         if value or not required:
@@ -29,9 +44,23 @@ def prompt(label: str, default: Optional[str] = None, required: bool = True) -> 
 
 
 def prompt_password(label: str, default: Optional[str] = None, required: bool = True) -> str:
+    # getpass usa /dev/tty di default se disponibile, ma se fallisce gestiamolo
     while True:
         suffix = f" [{default}]" if default else ""
-        value = getpass.getpass(f"{label}{suffix}: ")
+        try:
+            value = getpass.getpass(f"{label}{suffix}: ")
+        except EOFError:
+             # Fallback manuale su tty se getpass fallisce su EOF
+             print(f"{label}{suffix}: ", end="", flush=True)
+             try:
+                 with open("/dev/tty", "r") as tty:
+                     # Nota: password sarà visibile qui, ma è un fallback estremo
+                     # Purtroppo getpass su /dev/tty dovrebbe funzionare
+                     # Se siamo qui, qualcosa è strano.
+                     value = tty.readline().rstrip("\n")
+             except OSError:
+                 sys.exit(1)
+
         if not value and default is not None:
             value = default
         if value or not required:
@@ -43,7 +72,7 @@ def prompt_yes_no(label: str, default: bool = False) -> bool:
     mapping = {"y": True, "yes": True, "n": False, "no": False}
     default_char = "y" if default else "n"
     while True:
-        choice = input(f"{label} [y/n] (default {default_char}): ").strip().lower()
+        choice = robust_input(f"{label} [y/n] (default {default_char}): ").strip().lower()
         if not choice:
             return default
         if choice in mapping:
@@ -61,6 +90,11 @@ def ensure_dependencies() -> None:
         importlib.import_module("paramiko")
     except ModuleNotFoundError:
         required_packages.append("python3-paramiko")
+    
+    try:
+        importlib.import_module("jinja2")
+    except ModuleNotFoundError:
+        required_packages.append("python3-jinja2")
     
     # Verifica presenza cron
     if shutil.which("cron") is None and shutil.which("crond") is None:
@@ -134,7 +168,7 @@ def deploy_scripts(target_dir: Path) -> Path:
         print(f"✗ Permessi insufficienti per creare {target_dir}. Esegui lo script come root.")
         raise SystemExit(1)
 
-    files_to_copy = ["proxmox_core.py", "proxmox_report.py", "update_scripts.py"]
+    files_to_copy = ["proxmox_core.py", "proxmox_report.py", "update_scripts.py", "html_generator.py", "email_sender.py"]
     for filename in files_to_copy:
         src = source_dir / filename
         if not src.exists():
@@ -144,6 +178,18 @@ def deploy_scripts(target_dir: Path) -> Path:
         shutil.copy2(src, dst)
         if dst.suffix == ".py":
             dst.chmod(0o755)
+            
+    # Copy templates
+    templates_src = source_dir / "templates"
+    templates_dst = target_dir / "templates"
+    if templates_src.exists():
+        if templates_dst.exists():
+            shutil.rmtree(templates_dst)
+        shutil.copytree(templates_src, templates_dst)
+        print(f"✓ Template copiati in {templates_dst}")
+    else:
+        print(f"⚠ Directory templates mancante: {templates_src}")
+        
     print(f"✓ Script copiati in {target_dir}")
     return (target_dir / "proxmox_core.py").resolve()
 
@@ -247,6 +293,26 @@ def setup_v2(script_path: str) -> Tuple[str, str]:
     if prompt_yes_no("Abilitare auto-aggiornamento script prima di ogni esecuzione?", default=True):
         args.append("--auto-update")
 
+    # Email Config
+    smtp_conf = {"enabled": False}
+    if prompt_yes_no("\nConfigurare invio report via email?"):
+        smtp_host = prompt("SMTP Host", default="smtp.gmail.com")
+        smtp_port = prompt("SMTP Port", default="587")
+        smtp_user = prompt("SMTP Username")
+        smtp_password = prompt_password("SMTP Password", required=True)
+        smtp_sender = prompt("Email Mittente", default=smtp_user)
+        smtp_recipients = prompt("Destinatari (separati da virgola)")
+        
+        smtp_conf = {
+            "enabled": True,
+            "host": smtp_host,
+            "port": int(smtp_port),
+            "user": smtp_user,
+            "password": smtp_password,
+            "sender": smtp_sender,
+            "recipients": smtp_recipients
+        }
+
     # Generate config.json (prepara dizionario)
     # Nota: installazione avverrà nella directory dove risiede lo script
     # Ma noi dobbiamo sapere dove verrà copiato lo script.
@@ -283,7 +349,8 @@ def setup_v2(script_path: str) -> Tuple[str, str]:
             "username": "proxmox",
             "password": sftp_password,
             "base_path": "/home/proxmox/uploads"
-        }
+        },
+        "smtp": smtp_conf
     }
     
     # Scrivi config.json
@@ -327,7 +394,7 @@ def main() -> None:
     print()
     
     while True:
-        choice = input("Seleziona modalità [1] (default 1): ").strip()
+        choice = robust_input("Seleziona modalità [1] (default 1): ").strip()
         if not choice:
             choice = "1"
         if choice in ("1"):

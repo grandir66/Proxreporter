@@ -9,6 +9,8 @@ The system is designed to run directly on the Proxmox host (or remotely via SSH/
 -   **Deep Analysis**: Collects extensive details including VM states, hardware capabilities (CPU/RAM/Disk), network configurations (VLANs, Bridges, Bonds), and storage usage.
 -   **Security First**: Uses `config.json` to store sensitive credentials (SFTP passwords), avoiding hardcoded secrets in scripts.
 -   **Automated Delivery**: Compresses reports and configuration backups into an archive and uploads it via secure SFTP.
+-   **HTML Reporting**: Generates modern, responsive HTML reports summarizing the cluster status, VM usage, and storage.
+-   **Email Alerts**: Sends the HTML report directly via email (SMTP) to configured recipients.
 -   **Notification System**: Integrates with Proxmox's notification system to alert on backup status or errors.
 -   **Auto-Update**: Capable of self-updating from the repository to ensure the latest features and fixes are applied.
 -   **Low Footprint**: Written in Python 3 with minimal external dependencies.
@@ -37,6 +39,7 @@ During installation, the interactive setup wizard will prompt you for the follow
 | **Output Directory** | The folder where reports and logs will be saved. Default: `/var/log/proxreporter`. |
 | **Client Code (codcli)** | A unique code to identify the client/site (e.g., `CL001`). Used in filenames. |
 | **Client Name** | A human-readable name for the client (e.g., `Acme Corp`). |
+| **Email Reporting?** | `y` to enable SMTP reporting. Limits prompts for Host, User, Pass, Recipients. |
 | **SFTP Password** | **Required**. The password for the `proxmox` user on the collected SFTP server (`sftp.domarc.it`). |
 | **Remote Host?** | `y` if you want to query a *remote* Proxmox server via SSH; `n` to query the *local* host (recommended). |
 | **Auto-Update?** | `y` to check for script updates before every run. Recommended for maintenance-free operation. |

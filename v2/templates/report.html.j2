@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proxmox Report - {{ client.nomecliente }}</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f4; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1, h2, h3 { color: #E55934; /* Proxmox Orange-ish */ }
+        h1 { border-bottom: 2px solid #E55934; padding-bottom: 10px; }
+        .header-info { display: flex; justify-content: space-between; margin-bottom: 20px; background: #eee; padding: 10px; border-radius: 5px; }
+        .section { margin-bottom: 30px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px; border-bottom: 1px solid #ddd; text-align: left; }
+        th { background-color: #f8f8f8; font-weight: 600; }
+        tr:hover { background-color: #f9f9f9; }
+        .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold; }
+        .status-ok, .status-running { background-color: #d4edda; color: #155724; }
+        .status-stopped { background-color: #f8d7da; color: #721c24; }
+        .status-warning { background-color: #fff3cd; color: #856404; }
+        .footer { margin-top: 40px; font-size: 0.8em; text-align: center; color: #777; border-top: 1px solid #eee; padding-top: 20px; }
+        .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+        .card { background: #fafafa; border: 1px solid #ddd; padding: 15px; border-radius: 5px; }
+        .card h3 { margin-top: 0; font-size: 1.1em; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        .metric { display: flex; justify-content: space-between; margin-bottom: 5px; }
+        .metric-label { font-weight: 500; color: #555; }
+        .metric-value { font-weight: bold; }
+        .alert { padding: 10px; margin-bottom: 15px; border-radius: 4px; border: 1px solid transparent; }
+        .alert-info { background-color: #d1ecf1; border-color: #bee5eb; color: #0c5460; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Proxmox Report: {{ client.nomecliente }}</h1>
+            <div class="header-info">
+                <div><strong>Codice Cliente:</strong> {{ client.codcli }}</div>
+                <div><strong>Data Report:</strong> {{ date_generated }}</div>
+                <div><strong>Server ID:</strong> {{ client.server_identifier }}</div>
+            </div>
+        </div>
+
+        {% if cluster.is_cluster %}
+        <div class="section">
+            <h2>Cluster Status: {{ cluster.cluster_name }}</h2>
+            <p><strong>Nodi nel cluster:</strong> {{ cluster.nodes | join(', ') }}</p>
+        </div>
+        {% endif %}
+
+        <div class="section">
+            <h2>Host Summary</h2>
+            <div class="card-grid">
+                {% for host in hosts %}
+                <div class="card">
+                    <h3>{{ host.hostname }}</h3>
+                    <div class="metric"><span class="metric-label">Uptime:</span> <span class="metric-value">{{ host.uptime_human }}</span></div>
+                    <div class="metric"><span class="metric-label">CPU Usage:</span> <span class="metric-value">{{ "%.1f"|format(host.cpu_usage_percent|float) if host.cpu_usage_percent is not none else 'N/A' }}%</span></div>
+                    <div class="metric"><span class="metric-label">RAM Usage:</span> <span class="metric-value">{{ "%.1f"|format(host.memory_usage_percent|float) if host.memory_usage_percent is not none else 'N/A' }}%</span></div>
+                    <div class="metric"><span class="metric-label">Load Avg:</span> <span class="metric-value">{{ host.load_average_1m }}, {{ host.load_average_5m }}, {{ host.load_average_15m }}</span></div>
+                    <div class="metric"><span class="metric-label">Kernel:</span> <span class="metric-value">{{ host.kernel_version }}</span></div>
+                    <div class="metric"><span class="metric-label">PVE Version:</span> <span class="metric-value">{{ host.proxmox_version }}</span></div>
+                    <div class="metric"><span class="metric-label">Licenza:</span> <span class="metric-value">{{ host.license_status or 'Community' }}</span></div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        {% if vms %}
+        <div class="section">
+            <h2>Virtual Machines & Containers ({{ vms|length }})</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Node</th>
+                        <th>CPU / RAM</th>
+                        <th>IP Address</th>
+                        <th>Uptime</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for vm in vms %}
+                    <tr>
+                        <td><span class="status-badge status-{{ vm.status }}">{{ vm.status }}</span></td>
+                        <td>{{ vm.vmid }}</td>
+                        <td>{{ vm.name }}</td>
+                        <td>{{ vm.node }}</td>
+                        <td>{{ vm.cores }} vCPU / {{ "%.1f"|format(vm.memory_mb|float / 1024) }} GB</td>
+                        <td>{{ vm.ip_addresses }}</td>
+                        <td>{{ (vm.uptime|int / 3600)|round(1) }}h</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-info">
+            Nessuna VM attiva rilevata o raccolta VM disabilitata.
+        </div>
+        {% endif %}
+
+        <div class="section">
+            <h2>Storage Usage</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Node</th>
+                        <th>Storage</th>
+                        <th>Type</th>
+                        <th>Usage</th>
+                        <th>Free</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for host in hosts %}
+                        {% for st in host.storage %}
+                        <tr>
+                            <td>{{ host.hostname }}</td>
+                            <td>{{ st.name }}</td>
+                            <td>{{ st.type }}</td>
+                            <td>
+                                {{ "%.1f"|format(st.used_gb|float) }} / {{ "%.1f"|format(st.total_gb|float) }} GB
+                                ({{ "%.1f"|format((st.used_gb|float / st.total_gb|float * 100) if st.total_gb|float > 0 else 0) }}%)
+                            </td>
+                            <td>{{ "%.1f"|format(st.available_gb|float) }} GB</td>
+                            <td><span class="status-badge {{ 'status-ok' if st.active else 'status-stopped' }}">{{ 'Active' if st.active else 'Inactive' }}</span></td>
+                        </tr>
+                        {% endfor %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="footer">
+            Generato automaticamente da Proxreporter v2 il {{ date_generated }}
+        </div>
+    </div>
+</body>
+</html>
