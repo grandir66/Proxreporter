@@ -3370,7 +3370,9 @@ class SFTPUploader:
             logger.error("codcli o nomecliente non configurati")
             return False
             
-        base_remote_path = f"{self.sftp_config.get('base_path', '/home/proxmox/uploads')}/{codcli}_{nomecliente}"
+        # Modifica: Non creare sottocartella per permettere ingestione diretta
+        # base_remote_path = f"{self.sftp_config.get('base_path', '/home/proxmox/uploads')}/{codcli}_{nomecliente}"
+        base_remote_path = self.sftp_config.get('base_path', '/home/proxmox/uploads')
         
         logger.info(f"→ Upload SFTP su {self.sftp_config.get('host')}:{base_remote_path}")
         
