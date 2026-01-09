@@ -15,6 +15,7 @@ import sys
 import json
 from pathlib import Path
 from typing import List, Optional, Tuple
+import random
 
 
 def robust_input(prompt_text: str) -> str:
@@ -148,14 +149,18 @@ def ensure_dependencies() -> None:
 
 def build_cron_expression() -> str:
     print("\nSeleziona la frequenza di esecuzione:")
-    print("  1) Ogni giorno alle 02:00")
-    print("  2) Ogni ora (minuto 0)")
+    print("  1) Ogni giorno alle 11:00 (+/- 60 min variabile)")
+    print("  2) Ogni giorno alle 02:00 (legacy)")
     print("  3) Personalizzata (inserisci espressione cron)")
     choice = prompt("Scelta", default="1")
     if choice == "1":
-        return "0 2 * * *"
+        # Genera orario randomico tra 10:00 e 12:59
+        rand_min = random.randint(0, 59)
+        rand_hour = random.randint(10, 12)
+        print(f"  → Orario calcolato randomicamente: {rand_hour:02d}:{rand_min:02d}")
+        return f"{rand_min} {rand_hour} * * *"
     if choice == "2":
-        return "0 * * * *"
+        return "0 2 * * *"
     print("Inserisci espressione cron (es. 30 3 * * 1-5):")
     return prompt("Espressione cron personalizzata")
 
