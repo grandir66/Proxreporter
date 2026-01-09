@@ -540,18 +540,18 @@ def configure_backup_jobs_notification(
         True se la configurazione è andata a buon fine, False altrimenti
     """
     try:
-        logger.info()
+        logger.info("")
         logger.info("=" * 70)
         logger.info("  CONFIGURAZIONE NOTIFICATION MATCHER PER BACKUP")
         logger.info("=" * 70)
-        logger.info()
+        logger.info("")
         
         # Nome del matcher
         matcher_name = f"backup-matcher-{codcli}"
         
         logger.info(f"  Creazione notification matcher: {matcher_name}")
         logger.info(f"  Target: {target_name}")
-        logger.info()
+        logger.info("")
         
         # Verifica se il matcher esiste già
         matcher_exists = False
@@ -631,11 +631,11 @@ def configure_backup_jobs_notification(
             return False
         
         logger.info(f"  ✓ Notification matcher creato con successo")
-        logger.info()
+        logger.info("")
         logger.info(f"  Il matcher cattura automaticamente:")
         logger.info(f"    • Tutti i job di tipo 'vzdump' (backup)")
         logger.info(f"    • Invia notifiche al target: {target_name}")
-        logger.info()
+        logger.info("")
         
         # Raccoglie email dai backup job esistenti per aggiungerle al target
         logger.info(f"  → Raccolta email dai backup job esistenti...")
@@ -746,10 +746,10 @@ def configure_backup_jobs_notification(
             else:
                 logger.info(f"  ⚠ Possibile errore nell'aggiornamento delle email")
             
-            logger.info()
+            logger.info("")
         else:
             logger.info(f"  ℹ Nessuna email trovata nei backup job esistenti")
-            logger.info()
+            logger.info("")
         
         logger.info("=" * 70)
         logger.info(f"  ✓ CONFIGURAZIONE COMPLETATA")
@@ -758,7 +758,7 @@ def configure_backup_jobs_notification(
         if all_emails:
             logger.info(f"    Email nel target: {len(all_emails)}")
         logger.info("=" * 70)
-        logger.info()
+        logger.info("")
         
         return True
         
@@ -907,7 +907,7 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
 
     extractor = ProxmoxLocalExtractor(config, features_config)
     execution_mode = extractor.detect_execution_mode()
-    logger.info()
+    logger.info("")
 
     if execution_mode == "ssh":
         if not extractor.connect_ssh():
@@ -920,7 +920,7 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
     
     # Configura SMTP per le notifiche (se password disponibile)
     if execution_mode in ("local", "ssh") and executor:
-        logger.info()
+        logger.info("")
         logger.info("→ Configurazione SMTP automatica...")
         # Cerca password nel config prima di usare DEFAULT_SMTP_PASSWORD
         smtp_password = None
@@ -943,23 +943,23 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
             target_name = f"da-alert-{codcli}"
             configure_backup_jobs_notification(target_name, codcli, execution_mode, executor)
     else:
-        logger.info()
+        logger.info("")
         logger.info("  ℹ Configurazione SMTP saltata (modalità API o executor non disponibile)")
     
-    logger.info()
+    logger.info("")
 
     logger.info("→ Estrazione informazioni nodo...")
     extractor.get_node_info()
     detected_identifier = extractor.node_info.get("hostname") or server_identifier
     server_identifier = detected_identifier
-    logger.info()
+    logger.info("")
 
     collect_cluster = feature_enabled(features_config, "collect_cluster", True)
     if collect_cluster:
         extractor.get_cluster_info()
     else:
         logger.info("→ Raccolta informazioni cluster disabilitata")
-    logger.info()
+    logger.info("")
 
     system_conf = config.get("system", {})
     csv_dir = Path(system_conf.get("csv_directory", output_dir / "csv"))
@@ -980,7 +980,7 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
             filtered = [host for host in all_hosts_info if host.get("hostname") == current_hostname]
             if filtered:
                 all_hosts_info = filtered
-        logger.info()
+        logger.info("")
         if all_hosts_info and execution_mode != "api" and (collect_host_details or collect_network):
             for host_info in all_hosts_info:
                 if host_info.get("hostname") == current_hostname:
@@ -990,7 +990,7 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
                     break
     else:
         logger.info("→ Raccolta informazioni host disabilitata")
-        logger.info()
+        logger.info("")
 
     if collect_storage and all_hosts_info:
         current_hostname = extractor.node_info.get("hostname")
@@ -1013,7 +1013,7 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
     csv_file: Optional[str] = None
     if collect_vms:
         vms = get_full_vm_details(extractor, config, execution_mode)
-        logger.info()
+        logger.info("")
         csv_file_path = write_vms_csv(
             vms,
             csv_dir,
@@ -1028,11 +1028,11 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
         else:
             logger.info("✗ Errore salvataggio CSV VM")
             sys.exit(1)
-        logger.info()
+        logger.info("")
     else:
         extractor.vms_data = []
         logger.info("→ Raccolta VM disabilitata")
-        logger.info()
+        logger.info("")
 
     host_csv_file: Optional[str] = None
     storage_csv_file: Optional[str] = None
@@ -1052,10 +1052,10 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
             logger.info(f"✓ CSV storage salvato: {storage_csv_file}")
         if collect_network and network_csv_file and network_csv_file and Path(network_csv_file).exists():
             logger.info(f"✓ CSV network salvato: {network_csv_file}")
-        logger.info()
+        logger.info("")
     else:
         logger.info("→ Raccolta CSV host/storage/network disabilitata")
-        logger.info()
+        logger.info("")
 
     backup_file: Optional[str] = None
     collect_backup = feature_enabled(features_config, "collect_backup", True)
@@ -1065,19 +1065,19 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
         backup_manager.ssh_client = extractor.ssh_client
         if backup_manager.create_backup(str(backup_dir), codcli, nomecliente, int(system_conf.get("max_file_copies", 5)), server_identifier):
             backup_file = backup_manager.backup_file
-        logger.info()
+        logger.info("")
     else:
         if not collect_backup:
             logger.info("→ Backup disabilitato dalle feature")
         else:
             logger.info("→ Backup non disponibile in modalità API")
-        logger.info()
+        logger.info("")
 
     if extractor.ssh_client:
         extractor.ssh_client.close()
         extractor.ssh_client = None
         logger.info("✓ Connessione SSH chiusa")
-        logger.info()
+        logger.info("")
 
     if not no_upload and config.get("sftp", {}).get("enabled"):
         uploader = SFTPUploader(config)
@@ -1094,10 +1094,10 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
             files.append(backup_file)
         if files:
             attempt_sftp_upload(uploader, files)
-        logger.info()
+        logger.info("")
     else:
         logger.info("→ Upload SFTP disabilitato")
-        logger.info()
+        logger.info("")
 
     # -----------------------------------------------------------------------
     # HTML REPORT & EMAIL
@@ -1169,7 +1169,7 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
         logger.info(f"  📄 CSV Network:  {network_csv_file}")
     if collect_backup and backup_file and Path(backup_file).exists():
         logger.info(f"  📦 Backup: {backup_file}")
-    logger.info()
+    logger.info("")
 
 
 # ---------------------------------------------------------------------------
@@ -1179,8 +1179,8 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Proxmox local reporter (cron edition)")
-    parser.add_argument("--codcli", required=True, help="Codice cliente")
-    parser.add_argument("--nomecliente", required=True, help="Nome cliente")
+    parser.add_argument("--codcli", help="Codice cliente (opzionale se presente config.json)")
+    parser.add_argument("--nomecliente", help="Nome cliente (opzionale se presente config.json)")
     parser.add_argument("--output-dir", default="reports", help="Directory di output (default: reports)")
     parser.add_argument("--no-upload", action="store_true", help="Non eseguire l'upload SFTP")
     parser.add_argument("--host", help="Hostname/IP Proxmox remoto (senza porta, useremo 8006 per API)")
@@ -2862,10 +2862,21 @@ def main() -> None:
                     config["sftp"]["username"] = file_config["sftp"]["username"]
             
             # Merge Client Info (se non passati da CLI, ma CLI è required per ora)
+            # Merge Client Info (se non passati da CLI)
             if "client" in file_config:
-                 # Se codcli/nomecliente sono dummy o vuoti nel build_config iniziale (dalla CLI), usiamo quelli del file?
-                 # Attualmente CLI richiede codcli/nomecliente.
-                 pass
+                client_cfg = file_config["client"]
+                if not args.codcli and client_cfg.get("codcli"):
+                    config["client"]["codcli"] = client_cfg["codcli"]
+                    # Aggiorniamo anche le variabili locali usate dopo
+                    args.codcli = client_cfg["codcli"] 
+                if not args.nomecliente and client_cfg.get("nomecliente"):
+                    config["client"]["nomecliente"] = client_cfg["nomecliente"]
+                    args.nomecliente = client_cfg["nomecliente"]
+            
+            # Update build_config vars since they were immutable strings in function scope, 
+            # but config dict is mutable.
+            # However, run_report uses args.codcli directly.
+
 
              # Merge SMTP
             if "smtp" in file_config:
@@ -2874,7 +2885,17 @@ def main() -> None:
         except Exception as e:
             logger.info(f"⚠ Errore caricamento config file: {e}")
 
-
+    
+    # Validation
+    if not args.codcli or not args.nomecliente:
+        # Se stiamo facendo solo auto-update, va bene ignorare
+        args_prelim = sys.argv[1:]
+        if "--auto-update" in args_prelim or "--skip-update" in args_prelim:
+             if not args.codcli: args.codcli = "UPDATE"
+             if not args.nomecliente: args.nomecliente = "UPDATE"
+        else:
+            logger.error("✗ Errore: --codcli e --nomecliente sono obbligatori (o devono essere nel config.json)")
+            sys.exit(1)
     logger.info("=" * 70)
     logger.info("PROXMOX LOCAL REPORTER (CRON)")
     logger.info("=" * 70)
@@ -2895,7 +2916,7 @@ def main() -> None:
     target_desc = ssh_host if remote_enabled else local_hostname
     logger.info(f"Target Proxmox: {target_desc} ({'remoto' if remote_enabled else 'locale'})")
     logger.info(f"Output directory: {output_dir}")
-    logger.info() # Keep some visual separation in stdout? Or just rely on logger
+    logger.info("") # Keep some visual separation in stdout? Or just rely on logger
 
     try:
         run_report(config, args.codcli, args.nomecliente, server_identifier, output_dir, args.no_upload)
