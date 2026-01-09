@@ -88,7 +88,7 @@
                         <td>{{ vm.vmid }}</td>
                         <td>{{ vm.name }}</td>
                         <td>{{ vm.node }}</td>
-                        <td>{{ vm.cores }} vCPU / {{ "%.1f"|format(vm.memory_mb|float / 1024) }} GB</td>
+                        <td>{{ vm.cores }} vCPU / {{ vm.memory_assigned }}</td>
                         <td>{{ vm.ip_addresses }}</td>
                         <td>{{ (vm.uptime|int / 3600)|round(1) }}h</td>
                     </tr>
