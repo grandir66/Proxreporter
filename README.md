@@ -1,8 +1,13 @@
-# Proxreporter V2
+# Proxreporter
 
-Proxreporter is an automated reporting audting tool designed for Proxmox VE environments. It efficiently collects detailed information about virtual machines, containers, hosts, storage, and networking configuration, generating comprehensive CSV reports.
+Proxreporter is an automated reporting and auditing tool designed for Proxmox VE environments. It efficiently collects detailed information about virtual machines, containers, hosts, storage, and networking configuration, generating comprehensive CSV reports.
 
 The system is designed to run directly on the Proxmox host (or remotely via SSH/API), supports secure configurations, generates backups of the collected data, and uploads everything to a central SFTP server.
+
+## Versions
+
+- **V3 (Modular)**: New architecture in `src/proxreporter/` with improved security, error handling, and performance. [See V3 README](src/README.md)
+- **V2 (Legacy)**: Original scripts in root directory, still fully functional.
 
 ## Features
 
@@ -28,16 +33,31 @@ Before running the installation, ensure you have the following information ready
 
 ### Quick Install (Recommended)
 
-To install Proxreporter V2 on your Proxmox host, simply run the following command as `root`. This one-liner handles dependencies, downloading, and configuration.
+To install Proxreporter on your Proxmox host, run the following command as `root`:
 
 ```bash
-wget -q -O install.sh https://raw.githubusercontent.com/grandir66/Proxreporter/main/v2/install.sh && bash install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/grandir66/Proxreporter/main/install.sh)
+```
+
+Or with wget:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/grandir66/Proxreporter/main/install.sh | bash
+```
+
+### Install V3 (Modular Architecture)
+
+For the new modular version with improved security and performance:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/grandir66/Proxreporter/main/install_v3.sh)
 ```
 
 ### What the Installer Does
-1.  **Checks Dependencies**: Ensures `git`, `python3`, and `python3-venv` (if needed) are installed.
+1.  **Checks Dependencies**: Ensures `git`, `python3`, and required packages are installed.
 2.  **Clones Repository**: Downloads the latest version of the code to `/opt/proxreport`.
-3.  **Launches Setup**: Starts the interactive `setup.py` wizard to configure the system.
+3.  **Preserves Configuration**: Keeps existing `config.json` and `.secret.key` during updates.
+4.  **Launches Setup**: Starts the interactive `setup.py` wizard to configure the system.
 
 ## Setup & Configuration Guide
 
@@ -72,7 +92,7 @@ During the installation, the interactive wizard will ask you to configure the sy
 
 ### Configuration File (`config.json`)
 
-The setup process generates a secured `config.json` file in `/opt/proxreport/v2/config.json`.
+The setup process generates a secured `config.json` file in `/opt/proxreport/config.json`.
 You can manually edit this file to change passwords or settings without reinstalling.
 
 **Example `config.json`**:
@@ -108,20 +128,45 @@ You can manually edit this file to change passwords or settings without reinstal
 
 The system is automatically scheduled via `crond` (typically 11:00 AM daily). However, you can run it manually for testing or on-demand reports.
 
+### V3 (Modular - Recommended)
+
 ```bash
-cd /opt/proxreport/v2
-python3 proxmox_core.py --config config.json
+python3 /opt/proxreport/src/proxreporter_cli.py --config /opt/proxreport/config.json --local
+```
+
+Or using the symlink (if installed with install_v3.sh):
+
+```bash
+proxreporter --config /opt/proxreport/config.json --local
+```
+
+### V2 (Legacy)
+
+```bash
+python3 /opt/proxreport/proxmox_core.py --config /opt/proxreport/config.json --local
 ```
 
 ### Command Line Arguments
 
 -   `--config <path>`: Specify a JSON configuration file.
 -   `--no-upload`: Generate reports but do *not* upload to SFTP.
--   `--skip-update`: Skip the auto-update check.
+-   `--skip-update`: Skip the auto-update check (V2 only).
 -   `--local`: Force local execution mode even if config specifies remote.
+-   `--debug`: Enable debug logging (V3 only).
 
 ## Troubleshooting
 
 -   **Logs**: Check `/var/log/proxreporter/cron.log` for execution logs.
 -   **Permissions**: Ensure the script runs as `root` so it can access system files (`/etc/pve`, `/etc/network/interfaces`).
 -   **SFTP Errors**: Verify the `sftp.domarc.it` connection on port `11122`.
+
+## V3 Architecture
+
+The V3 modular version provides:
+- Custom exception hierarchy for better error handling
+- SSH connection pooling for performance
+- Parallel data extraction with ThreadPoolExecutor
+- Secure password handling (not exposed in process list)
+- Comprehensive unit tests
+
+See [src/README.md](src/README.md) for detailed V3 documentation.

@@ -3,6 +3,20 @@
 This is the refactored version of Proxreporter with a modular architecture,
 improved security, and better error handling.
 
+## Installation
+
+### Quick Install
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/grandir66/Proxreporter/main/install_v3.sh)
+```
+
+Or with wget:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/grandir66/Proxreporter/main/install_v3.sh | bash
+```
+
 ## Structure
 
 ```
