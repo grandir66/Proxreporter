@@ -19,19 +19,27 @@ import random
 
 
 def robust_input(prompt_text: str) -> str:
-    """Legge input da stdin, con fallback su /dev/tty se stdin è chiuso (pipe)."""
-    try:
-        return input(prompt_text)
-    except EOFError:
-        # Se siamo in pipe (wget | bash), stdin è chiuso. Usiamo tty.
+    """Legge input da stdin, con fallback su /dev/tty se stdin non è interattivo (es. pipe)."""
+    # Se stdin non è un TTY (es. curl | bash), prova a usare /dev/tty direttamente
+    if not sys.stdin.isatty():
         try:
             with open("/dev/tty", "r") as tty:
-                print(prompt_text, end="", flush=True)
-                return tty.readline().rstrip("\n")
+                # Scrivi il prompt direttamente sul TTY per essere sicuri che l'utente lo veda
+                with open("/dev/tty", "w") as out_tty:
+                    out_tty.write(prompt_text)
+                    out_tty.flush()
+                line = tty.readline()
+                return line.rstrip("\n")
         except OSError:
             print("\n✗ Errore: impossibile leggere input (stdin chiuso e tty non disponibile).")
             print("  Esegui lo script interattivamente o senza pipe.")
             sys.exit(1)
+
+    # Fallback standard se è un TTY o se sopra ha fallito in modo strano ma non fatale
+    try:
+        return input(prompt_text)
+    except EOFError:
+        return ""
 
 def prompt(label: str, default: Optional[str] = None, required: bool = True) -> str:
     while True:
