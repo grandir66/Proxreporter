@@ -48,7 +48,7 @@ fi
 
 # Clone/Update Repo
 # Clone/Update Repo
-if [ -d "$INSTALL_DIR" ]; then
+if [ -e "$INSTALL_DIR" ]; then
     if [ -d "$INSTALL_DIR/.git" ]; then
         echo "→ Updating existing installation in $INSTALL_DIR..."
         cd "$INSTALL_DIR"
@@ -56,10 +56,13 @@ if [ -d "$INSTALL_DIR" ]; then
         git fetch origin
         git reset --hard origin/$BRANCH
     else
-        echo "⚠ Directory $INSTALL_DIR exists but is not a git repository."
+        echo "⚠ Found existing path at $INSTALL_DIR (not a git repo)."
         BACKUP_DIR="${INSTALL_DIR}_bak_$(date +%s)"
         echo "→ Backing up to $BACKUP_DIR..."
         mv "$INSTALL_DIR" "$BACKUP_DIR"
+        
+        # Ensure it's gone
+        rm -rf "$INSTALL_DIR"
         
         echo "→ Cloning repository to $INSTALL_DIR..."
         git clone -b $BRANCH "$REPO_URL" "$INSTALL_DIR"
