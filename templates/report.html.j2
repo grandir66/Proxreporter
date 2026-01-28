@@ -5,129 +5,401 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Proxmox Report - {{ client.nomecliente }}</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f4; color: #333; margin: 0; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        h1, h2, h3 { color: #E55934; /* Proxmox Orange-ish */ }
-        h1 { border-bottom: 2px solid #E55934; padding-bottom: 10px; }
-        .header-info { display: flex; justify-content: space-between; margin-bottom: 20px; background: #eee; padding: 10px; border-radius: 5px; }
-        .section { margin-bottom: 30px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { padding: 12px; border-bottom: 1px solid #ddd; text-align: left; }
-        th { background-color: #f8f8f8; font-weight: 600; }
-        tr:hover { background-color: #f9f9f9; }
-        .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold; }
-        .status-ok, .status-running { background-color: #d4edda; color: #155724; }
-        .status-stopped { background-color: #f8d7da; color: #721c24; }
-        .status-warning { background-color: #fff3cd; color: #856404; }
-        .footer { margin-top: 40px; font-size: 0.8em; text-align: center; color: #777; border-top: 1px solid #eee; padding-top: 20px; }
-        .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
-        .card { background: #fafafa; border: 1px solid #ddd; padding: 15px; border-radius: 5px; }
-        .card h3 { margin-top: 0; font-size: 1.1em; border-bottom: 1px solid #eee; padding-bottom: 5px; }
-        .metric { display: flex; justify-content: space-between; margin-bottom: 5px; }
-        .metric-label { font-weight: 500; color: #555; }
-        .metric-value { font-weight: bold; }
-        .alert { padding: 10px; margin-bottom: 15px; border-radius: 4px; border: 1px solid transparent; }
-        .alert-info { background-color: #d1ecf1; border-color: #bee5eb; color: #0c5460; }
+        :root {
+            --primary: #E55934;
+            --primary-dark: #c44a2a;
+            --success: #28a745;
+            --warning: #ffc107;
+            --danger: #dc3545;
+            --info: #17a2b8;
+            --gray-100: #f8f9fa;
+            --gray-200: #e9ecef;
+            --gray-300: #dee2e6;
+            --gray-600: #6c757d;
+            --gray-800: #343a40;
+        }
+        
+        * { box-sizing: border-box; }
+        
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #f4f4f4; 
+            color: #333; 
+            margin: 0; 
+            padding: 20px; 
+            line-height: 1.5;
+        }
+        
+        .container { 
+            max-width: 1400px; 
+            margin: 0 auto; 
+            background: #fff; 
+            padding: 30px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 15px rgba(0,0,0,0.1); 
+        }
+        
+        h1 { color: var(--primary); border-bottom: 3px solid var(--primary); padding-bottom: 15px; margin-bottom: 25px; }
+        h2 { color: var(--primary-dark); border-bottom: 2px solid var(--gray-300); padding-bottom: 10px; margin-top: 40px; }
+        h3 { color: var(--gray-800); margin-top: 25px; }
+        h4 { color: var(--gray-600); margin-bottom: 10px; font-size: 0.95em; text-transform: uppercase; letter-spacing: 0.5px; }
+        
+        .header-info { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+            gap: 15px; 
+            margin-bottom: 30px; 
+            background: linear-gradient(135deg, var(--gray-100), var(--gray-200)); 
+            padding: 20px; 
+            border-radius: 8px; 
+            border-left: 4px solid var(--primary);
+        }
+        .header-info div { padding: 5px 0; }
+        .header-info strong { color: var(--gray-600); }
+        
+        .section { margin-bottom: 40px; }
+        
+        /* Tables */
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin-top: 15px; 
+            font-size: 0.9em;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        th, td { 
+            padding: 12px 10px; 
+            border: 1px solid var(--gray-300); 
+            text-align: left; 
+            vertical-align: top;
+        }
+        th { 
+            background: linear-gradient(135deg, var(--gray-100), var(--gray-200)); 
+            font-weight: 600; 
+            color: var(--gray-800);
+            position: sticky;
+            top: 0;
+        }
+        tr:nth-child(even) { background-color: var(--gray-100); }
+        tr:hover { background-color: #fff3cd; }
+        
+        /* Status badges */
+        .badge { 
+            padding: 4px 10px; 
+            border-radius: 20px; 
+            font-size: 0.8em; 
+            font-weight: 600; 
+            display: inline-block;
+            text-transform: uppercase;
+        }
+        .badge-success, .badge-running { background-color: #d4edda; color: #155724; }
+        .badge-danger, .badge-stopped { background-color: #f8d7da; color: #721c24; }
+        .badge-warning { background-color: #fff3cd; color: #856404; }
+        .badge-info { background-color: #d1ecf1; color: #0c5460; }
+        .badge-secondary { background-color: var(--gray-200); color: var(--gray-600); }
+        
+        /* Cards */
+        .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 20px; }
+        .card { 
+            background: #fff; 
+            border: 1px solid var(--gray-300); 
+            padding: 20px; 
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            transition: box-shadow 0.2s;
+        }
+        .card:hover { box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .card-header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+            border-bottom: 2px solid var(--primary); 
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+        .card-header h3 { margin: 0; font-size: 1.1em; }
+        
+        .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .metric { 
+            display: flex; 
+            justify-content: space-between; 
+            padding: 6px 0;
+            border-bottom: 1px dotted var(--gray-300);
+        }
+        .metric:last-child { border-bottom: none; }
+        .metric-label { color: var(--gray-600); font-size: 0.85em; }
+        .metric-value { font-weight: 600; text-align: right; max-width: 60%; word-break: break-word; }
+        .metric-full { grid-column: span 2; }
+        
+        /* Progress bars */
+        .progress { 
+            height: 8px; 
+            background: var(--gray-200); 
+            border-radius: 4px; 
+            overflow: hidden;
+            margin-top: 4px;
+        }
+        .progress-bar { height: 100%; transition: width 0.3s; }
+        .progress-bar-success { background: var(--success); }
+        .progress-bar-warning { background: var(--warning); }
+        .progress-bar-danger { background: var(--danger); }
+        
+        /* Collapsible sections */
+        .collapsible { cursor: pointer; user-select: none; }
+        .collapsible::before { content: "▼ "; font-size: 0.8em; }
+        .collapsible.collapsed::before { content: "▶ "; }
+        
+        /* Hardware info */
+        .hw-section { 
+            background: var(--gray-100); 
+            padding: 15px; 
+            border-radius: 6px; 
+            margin-top: 15px;
+        }
+        .hw-section h4 { margin-top: 0; color: var(--primary-dark); }
+        
+        /* Tags */
+        .tag { 
+            display: inline-block; 
+            padding: 2px 8px; 
+            margin: 2px; 
+            background: var(--info); 
+            color: white; 
+            border-radius: 12px; 
+            font-size: 0.75em;
+        }
+        
+        /* Summary stats */
+        .stats-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); 
+            gap: 15px; 
+            margin-bottom: 30px;
+        }
+        .stat-card { 
+            text-align: center; 
+            padding: 20px; 
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: white;
+            border-radius: 8px;
+        }
+        .stat-value { font-size: 2em; font-weight: bold; }
+        .stat-label { font-size: 0.85em; opacity: 0.9; margin-top: 5px; }
+        
+        /* Network table */
+        .net-details { font-size: 0.85em; color: var(--gray-600); }
+        
+        /* Footer */
+        .footer { 
+            margin-top: 50px; 
+            padding-top: 20px; 
+            border-top: 2px solid var(--gray-200); 
+            text-align: center; 
+            color: var(--gray-600);
+            font-size: 0.85em;
+        }
+        
+        /* Print styles */
+        @media print {
+            body { background: white; padding: 0; }
+            .container { box-shadow: none; }
+            .card:hover { box-shadow: none; }
+            tr:hover { background-color: inherit; }
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .card-grid { grid-template-columns: 1fr; }
+            .metric-grid { grid-template-columns: 1fr; }
+            .metric-full { grid-column: span 1; }
+            table { font-size: 0.8em; }
+            th, td { padding: 8px 5px; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>Proxmox Report: {{ client.nomecliente }}</h1>
-            <div class="header-info">
-                <div><strong>Codice Cliente:</strong> {{ client.codcli }}</div>
-                <div><strong>Data Report:</strong> {{ date_generated }}</div>
-                <div><strong>Server ID:</strong> {{ client.server_identifier }}</div>
+        <!-- Header -->
+        <h1>Proxmox Infrastructure Report</h1>
+        <div class="header-info">
+            <div><strong>Cliente:</strong> {{ client.nomecliente }}</div>
+            <div><strong>Codice:</strong> {{ client.codcli }}</div>
+            <div><strong>Server ID:</strong> {{ client.server_identifier }}</div>
+            <div><strong>Data Report:</strong> {{ date_generated }}</div>
+        </div>
+
+        <!-- Summary Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value">{{ hosts|length }}</div>
+                <div class="stat-label">Host/Nodi</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ vms|selectattr('status', 'equalto', 'running')|list|length if vms else 0 }}</div>
+                <div class="stat-label">VM Attive</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ vms|length if vms else 0 }}</div>
+                <div class="stat-label">VM Totali</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">
+                    {% set total_cores = namespace(value=0) %}
+                    {% for vm in vms if vms %}{% set total_cores.value = total_cores.value + (vm.cores|default(0)|int) %}{% endfor %}
+                    {{ total_cores.value }}
+                </div>
+                <div class="stat-label">vCPU Allocate</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">
+                    {% set total_ram = namespace(value=0) %}
+                    {% for vm in vms if vms %}{% set total_ram.value = total_ram.value + (vm.mem_total|default(0)|int) %}{% endfor %}
+                    {{ (total_ram.value / 1073741824)|round(0)|int }} GB
+                </div>
+                <div class="stat-label">RAM Allocata</div>
             </div>
         </div>
 
-        {% if cluster.is_cluster %}
+        <!-- Cluster Info -->
+        {% if cluster and cluster.is_cluster %}
         <div class="section">
-            <h2>Cluster Status: {{ cluster.cluster_name }}</h2>
-            <p><strong>Nodi nel cluster:</strong> {{ cluster.nodes | join(', ') }}</p>
+            <h2>Cluster: {{ cluster.cluster_name }}</h2>
+            <p><strong>Nodi:</strong> 
+                {% for node in cluster.nodes %}
+                    <span class="badge badge-info">{{ node }}</span>
+                {% endfor %}
+            </p>
         </div>
         {% endif %}
 
+        <!-- Host Details -->
         <div class="section">
-            <h2>Host Summary</h2>
+            <h2>Dettaglio Host ({{ hosts|length }})</h2>
             <div class="card-grid">
                 {% for host in hosts %}
                 <div class="card">
-                    <h3>{{ host.hostname }}</h3>
-                    <div class="metric"><span class="metric-label">Uptime:</span> <span class="metric-value">{{ host.uptime_human }}</span></div>
-                    <div class="metric"><span class="metric-label">CPU Usage:</span> <span class="metric-value">{{ "%.1f"|format(host.cpu_usage_percent|float) if host.cpu_usage_percent is not none else 'N/A' }}%</span></div>
-                    <div class="metric"><span class="metric-label">RAM Usage:</span> <span class="metric-value">{{ "%.1f"|format(host.memory_usage_percent|float) if host.memory_usage_percent is not none else 'N/A' }}%</span></div>
-                    <div class="metric"><span class="metric-label">Load Avg:</span> <span class="metric-value">{{ host.load_average_1m }}, {{ host.load_average_5m }}, {{ host.load_average_15m }}</span></div>
-                    <div class="metric"><span class="metric-label">Kernel:</span> <span class="metric-value">{{ host.kernel_version }}</span></div>
-                    <div class="metric"><span class="metric-label">PVE Version:</span> <span class="metric-value">{{ host.proxmox_version }}</span></div>
-                    <div class="metric"><span class="metric-label">Licenza:</span> <span class="metric-value">{{ host.license_status or 'Community' }}</span></div>
+                    <div class="card-header">
+                        <h3>{{ host.hostname }}</h3>
+                        <span class="badge badge-success">Online</span>
+                    </div>
+                    
+                    <h4>Sistema</h4>
+                    <div class="metric-grid">
+                        <div class="metric"><span class="metric-label">Uptime</span><span class="metric-value">{{ host.uptime_human|default('N/A') }}</span></div>
+                        <div class="metric"><span class="metric-label">Proxmox</span><span class="metric-value">{{ host.proxmox_version|default(host.manager_version)|default('N/A') }}</span></div>
+                        <div class="metric metric-full"><span class="metric-label">Kernel</span><span class="metric-value">{{ host.kernel_version|default('N/A') }}</span></div>
+                    </div>
+                    
+                    <h4>CPU</h4>
+                    <div class="metric-grid">
+                        <div class="metric metric-full"><span class="metric-label">Modello</span><span class="metric-value">{{ host.cpu_model|default('N/A') }}</span></div>
+                        <div class="metric"><span class="metric-label">Core/Socket/Thread</span><span class="metric-value">{{ host.cpu_cores|default('?') }} / {{ host.cpu_sockets|default('?') }} / {{ host.cpu_threads|default('?') }}</span></div>
+                        <div class="metric"><span class="metric-label">Utilizzo</span><span class="metric-value">{{ "%.1f"|format(host.cpu_usage_percent|default(0)|float) }}%</span></div>
+                        <div class="metric metric-full"><span class="metric-label">Load Average</span><span class="metric-value">{{ host.load_average_1m|default('?') }}, {{ host.load_average_5m|default('?') }}, {{ host.load_average_15m|default('?') }}</span></div>
+                    </div>
+                    {% if host.cpu_usage_percent is defined %}
+                    <div class="progress">
+                        {% set cpu_pct = host.cpu_usage_percent|default(0)|float %}
+                        <div class="progress-bar {{ 'progress-bar-success' if cpu_pct < 70 else ('progress-bar-warning' if cpu_pct < 90 else 'progress-bar-danger') }}" style="width: {{ cpu_pct }}%"></div>
+                    </div>
+                    {% endif %}
+                    
+                    <h4>Memoria</h4>
+                    <div class="metric-grid">
+                        <div class="metric"><span class="metric-label">RAM Totale</span><span class="metric-value">{{ "%.1f"|format(host.memory_total_gb|default(0)|float) }} GB</span></div>
+                        <div class="metric"><span class="metric-label">RAM Usata</span><span class="metric-value">{{ "%.1f"|format(host.memory_used_gb|default(0)|float) }} GB ({{ "%.1f"|format(host.memory_usage_percent|default(0)|float) }}%)</span></div>
+                        <div class="metric"><span class="metric-label">Swap Totale</span><span class="metric-value">{{ "%.1f"|format(host.swap_total_gb|default(0)|float) }} GB</span></div>
+                        <div class="metric"><span class="metric-label">Swap Usato</span><span class="metric-value">{{ "%.1f"|format(host.swap_used_gb|default(0)|float) }} GB</span></div>
+                    </div>
+                    {% if host.memory_usage_percent is defined %}
+                    <div class="progress">
+                        {% set mem_pct = host.memory_usage_percent|default(0)|float %}
+                        <div class="progress-bar {{ 'progress-bar-success' if mem_pct < 70 else ('progress-bar-warning' if mem_pct < 90 else 'progress-bar-danger') }}" style="width: {{ mem_pct }}%"></div>
+                    </div>
+                    {% endif %}
+                    
+                    {% if host.temperature_highest_c or host.temperature_summary %}
+                    <h4>Temperature</h4>
+                    <div class="metric-grid">
+                        <div class="metric"><span class="metric-label">Max</span><span class="metric-value">{{ host.temperature_highest_c|default('N/A') }}°C</span></div>
+                        <div class="metric metric-full"><span class="metric-label">Dettaglio</span><span class="metric-value">{{ host.temperature_summary|default('N/A') }}</span></div>
+                    </div>
+                    {% endif %}
+                    
+                    <h4>Licenza</h4>
+                    <div class="metric-grid">
+                        <div class="metric"><span class="metric-label">Status</span>
+                            <span class="metric-value">
+                                {% set lic = host.license_status|default('Community') %}
+                                <span class="badge {{ 'badge-success' if 'Active' in lic else 'badge-secondary' }}">{{ lic }}</span>
+                            </span>
+                        </div>
+                        <div class="metric"><span class="metric-label">Livello</span><span class="metric-value">{{ host.license_level|default('N/A') }}</span></div>
+                        {% if host.subscription_next_due %}
+                        <div class="metric"><span class="metric-label">Scadenza</span><span class="metric-value">{{ host.subscription_next_due }}</span></div>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Hardware Details -->
+                    <div class="hw-section">
+                        <h4>Hardware</h4>
+                        <div class="metric-grid">
+                            <div class="metric"><span class="metric-label">Produttore</span><span class="metric-value">{{ host.system_manufacturer|default('N/A') }}</span></div>
+                            <div class="metric"><span class="metric-label">Modello</span><span class="metric-value">{{ host.system_product|default('N/A') }}</span></div>
+                            <div class="metric"><span class="metric-label">Seriale</span><span class="metric-value">{{ host.system_serial|default('N/A') }}</span></div>
+                            <div class="metric"><span class="metric-label">Scheda Madre</span><span class="metric-value">{{ host.board_name|default('N/A') }}</span></div>
+                            <div class="metric"><span class="metric-label">BIOS</span><span class="metric-value">{{ host.bios_vendor|default('') }} {{ host.bios_version|default('') }}</span></div>
+                            <div class="metric"><span class="metric-label">Data BIOS</span><span class="metric-value">{{ host.bios_release_date|default('N/A') }}</span></div>
+                        </div>
+                        {% if host.hardware_memory or host.hardware_storage or host.hardware_disk %}
+                        <div class="metric-grid" style="margin-top: 10px;">
+                            {% if host.hardware_memory %}<div class="metric metric-full"><span class="metric-label">Memoria HW</span><span class="metric-value">{{ host.hardware_memory }}</span></div>{% endif %}
+                            {% if host.hardware_storage %}<div class="metric metric-full"><span class="metric-label">Storage HW</span><span class="metric-value">{{ host.hardware_storage }}</span></div>{% endif %}
+                            {% if host.hardware_disk %}<div class="metric metric-full"><span class="metric-label">Dischi HW</span><span class="metric-value">{{ host.hardware_disk }}</span></div>{% endif %}
+                            {% if host.hardware_network %}<div class="metric metric-full"><span class="metric-label">Network HW</span><span class="metric-value">{{ host.hardware_network }}</span></div>{% endif %}
+                        </div>
+                        {% endif %}
+                    </div>
                 </div>
                 {% endfor %}
             </div>
         </div>
 
-        {% if vms %}
+        <!-- Storage -->
         <div class="section">
-            <h2>Virtual Machines & Containers ({{ vms|length }})</h2>
+            <h2>Storage</h2>
             <table>
                 <thead>
                     <tr>
-                        <th>Status</th>
-                        <th>ID</th>
-                        <th>Name</th>
-                        <th>Node</th>
-                        <th>CPU / RAM</th>
-                        <th>IP Address</th>
-                        <th>Uptime</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for vm in vms %}
-                    <tr>
-                        <td><span class="status-badge status-{{ vm.status }}">{{ vm.status }}</span></td>
-                        <td>{{ vm.vmid }}</td>
-                        <td>{{ vm.name }}</td>
-                        <td>{{ vm.node }}</td>
-                        <td>{{ vm.cores }} vCPU / {{ vm.memory_assigned }}</td>
-                        <td>{{ vm.ip_addresses }}</td>
-                        <td>{{ (vm.uptime|int / 3600)|round(1) }}h</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <div class="alert alert-info">
-            Nessuna VM attiva rilevata o raccolta VM disabilitata.
-        </div>
-        {% endif %}
-
-        <div class="section">
-            <h2>Storage Usage</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Node</th>
-                        <th>Storage</th>
-                        <th>Type</th>
-                        <th>Usage</th>
-                        <th>Free</th>
+                        <th>Host</th>
+                        <th>Nome</th>
+                        <th>Tipo</th>
+                        <th>Contenuto</th>
+                        <th>Totale</th>
+                        <th>Usato</th>
+                        <th>Libero</th>
+                        <th>%</th>
                         <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for host in hosts %}
-                        {% for st in host.storage %}
+                        {% for st in host.storage|default([]) %}
+                        {% set used_pct = ((st.used_gb|default(0)|float / st.total_gb|float * 100) if st.total_gb|default(0)|float > 0 else 0) %}
                         <tr>
                             <td>{{ host.hostname }}</td>
-                            <td>{{ st.name }}</td>
-                            <td>{{ st.type }}</td>
+                            <td><strong>{{ st.name }}</strong></td>
+                            <td><span class="badge badge-secondary">{{ st.type|default('N/A') }}</span></td>
+                            <td>{{ st.content|default('N/A') }}</td>
+                            <td>{{ "%.1f"|format(st.total_gb|default(0)|float) }} GB</td>
+                            <td>{{ "%.1f"|format(st.used_gb|default(0)|float) }} GB</td>
+                            <td>{{ "%.1f"|format(st.available_gb|default(0)|float) }} GB</td>
                             <td>
-                                {{ "%.1f"|format(st.used_gb|float) }} / {{ "%.1f"|format(st.total_gb|float) }} GB
-                                ({{ "%.1f"|format((st.used_gb|float / st.total_gb|float * 100) if st.total_gb|float > 0 else 0) }}%)
+                                <span class="badge {{ 'badge-success' if used_pct < 70 else ('badge-warning' if used_pct < 90 else 'badge-danger') }}">
+                                    {{ "%.0f"|format(used_pct) }}%
+                                </span>
                             </td>
-                            <td>{{ "%.1f"|format(st.available_gb|float) }} GB</td>
-                            <td><span class="status-badge {{ 'status-ok' if st.active else 'status-stopped' }}">{{ 'Active' if st.active else 'Inactive' }}</span></td>
+                            <td><span class="badge {{ 'badge-success' if st.active else 'badge-danger' }}">{{ 'Active' if st.active else 'Inactive' }}</span></td>
                         </tr>
                         {% endfor %}
                     {% endfor %}
@@ -135,8 +407,186 @@
             </table>
         </div>
 
+        <!-- Network -->
+        {% if hosts[0].network is defined and hosts[0].network %}
+        <div class="section">
+            <h2>Configurazione Network</h2>
+            {% for host in hosts %}
+            {% if host.network %}
+            <h3>{{ host.hostname }}</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Interfaccia</th>
+                        <th>Tipo</th>
+                        <th>Indirizzo IP</th>
+                        <th>Gateway</th>
+                        <th>Bridge/Bond</th>
+                        <th>VLAN</th>
+                        <th>Stato</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for net in host.network %}
+                    <tr>
+                        <td><strong>{{ net.iface|default(net.name)|default('N/A') }}</strong></td>
+                        <td><span class="badge badge-info">{{ net.type|default('N/A') }}</span></td>
+                        <td>{{ net.address|default(net.cidr)|default('N/A') }}{% if net.netmask %}/{{ net.netmask }}{% endif %}</td>
+                        <td>{{ net.gateway|default('-') }}</td>
+                        <td>{{ net.bridge_ports|default(net.slaves)|default('-') }}</td>
+                        <td>{{ net.vlan_id|default(net['vlan-id'])|default('-') }}</td>
+                        <td><span class="badge {{ 'badge-success' if net.active else 'badge-secondary' }}">{{ 'Up' if net.active else 'Down' }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Virtual Machines -->
+        {% if vms %}
+        <div class="section">
+            <h2>Virtual Machines & Containers ({{ vms|length }})</h2>
+            
+            <!-- VM Summary by status -->
+            <div style="margin-bottom: 20px;">
+                <span class="badge badge-success">{{ vms|selectattr('status', 'equalto', 'running')|list|length }} Running</span>
+                <span class="badge badge-danger">{{ vms|selectattr('status', 'equalto', 'stopped')|list|length }} Stopped</span>
+                {% set paused = vms|selectattr('status', 'equalto', 'paused')|list|length %}
+                {% if paused > 0 %}<span class="badge badge-warning">{{ paused }} Paused</span>{% endif %}
+            </div>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>ID</th>
+                        <th>Nome</th>
+                        <th>Tipo</th>
+                        <th>Nodo</th>
+                        <th>vCPU</th>
+                        <th>RAM</th>
+                        <th>Disco</th>
+                        <th>IP</th>
+                        <th>OS</th>
+                        <th>Uptime</th>
+                        <th>Snap</th>
+                        <th>Tags</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for vm in vms|sort(attribute='node,vmid') %}
+                    <tr>
+                        <td>
+                            <span class="badge badge-{{ 'success' if vm.status == 'running' else ('danger' if vm.status == 'stopped' else 'warning') }}">
+                                {{ vm.status }}
+                            </span>
+                        </td>
+                        <td>{{ vm.vmid }}</td>
+                        <td><strong>{{ vm.name }}</strong></td>
+                        <td><span class="badge badge-info">{{ vm.vm_type|default('qemu') }}</span></td>
+                        <td>{{ vm.node }}</td>
+                        <td>{{ vm.cores|default(0) }}{% if vm.sockets and vm.sockets|int > 1 %}x{{ vm.sockets }}{% endif %}</td>
+                        <td>
+                            {% if vm.mem_total %}
+                                {{ (vm.mem_total|int / 1073741824)|round(1) }} GB
+                            {% elif vm.memory_assigned %}
+                                {{ vm.memory_assigned }}
+                            {% else %}
+                                N/A
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if vm.disk_size %}
+                                {{ (vm.disk_size|int / 1073741824)|round(1) }} GB
+                            {% else %}
+                                {{ vm.num_disks|default(0) }} disk(s)
+                            {% endif %}
+                        </td>
+                        <td>
+                            {{ vm.primary_ip|default(vm.ip_addresses)|default(vm.ipv4)|default('-') }}
+                        </td>
+                        <td>{{ vm.ostype|default('-') }}</td>
+                        <td>
+                            {% if vm.uptime %}
+                                {% set hours = (vm.uptime|int / 3600)|round(1) %}
+                                {% if hours > 24 %}{{ (hours/24)|round(1) }}d{% else %}{{ hours }}h{% endif %}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>{{ vm.snapshots_count|default(0) }}</td>
+                        <td>
+                            {% if vm.tags %}
+                                {% for tag in vm.tags.split(',') if vm.tags %}
+                                    <span class="tag">{{ tag|trim }}</span>
+                                {% endfor %}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- VM Details (expanded) -->
+        <div class="section">
+            <h2>Dettaglio VM</h2>
+            <div class="card-grid">
+                {% for vm in vms|selectattr('status', 'equalto', 'running')|list %}
+                <div class="card">
+                    <div class="card-header">
+                        <h3>{{ vm.name }} ({{ vm.vmid }})</h3>
+                        <span class="badge badge-success">{{ vm.status }}</span>
+                    </div>
+                    <div class="metric-grid">
+                        <div class="metric"><span class="metric-label">Nodo</span><span class="metric-value">{{ vm.node }}</span></div>
+                        <div class="metric"><span class="metric-label">Tipo</span><span class="metric-value">{{ vm.vm_type|default('qemu') }}</span></div>
+                        <div class="metric"><span class="metric-label">vCPU</span><span class="metric-value">{{ vm.cores|default(0) }} core{% if vm.sockets and vm.sockets|int > 1 %} x {{ vm.sockets }} socket{% endif %}</span></div>
+                        <div class="metric"><span class="metric-label">RAM Assegnata</span><span class="metric-value">{% if vm.mem_total %}{{ (vm.mem_total|int / 1073741824)|round(1) }} GB{% else %}N/A{% endif %}</span></div>
+                        {% if vm.mem_used %}
+                        <div class="metric"><span class="metric-label">RAM Usata</span><span class="metric-value">{{ (vm.mem_used|int / 1073741824)|round(2) }} GB</span></div>
+                        {% endif %}
+                        <div class="metric"><span class="metric-label">OS</span><span class="metric-value">{{ vm.ostype|default('N/A') }}</span></div>
+                        <div class="metric"><span class="metric-label">BIOS</span><span class="metric-value">{{ vm.bios|default('seabios') }}</span></div>
+                        <div class="metric"><span class="metric-label">Boot</span><span class="metric-value">{{ vm.boot|default('N/A') }}</span></div>
+                        {% if vm.agent_enabled %}
+                        <div class="metric"><span class="metric-label">Guest Agent</span><span class="metric-value">{{ 'Enabled' if vm.agent_enabled else 'Disabled' }}{% if vm.agent_version %} ({{ vm.agent_version }}){% endif %}</span></div>
+                        {% endif %}
+                    </div>
+                    
+                    {% if vm.disks_details or vm.disks %}
+                    <h4>Dischi ({{ vm.num_disks|default('?') }})</h4>
+                    <div class="net-details">{{ vm.disks_details|default(vm.disks)|default('N/A') }}</div>
+                    {% endif %}
+                    
+                    {% if vm.networks_details or vm.networks %}
+                    <h4>Network ({{ vm.num_networks|default('?') }})</h4>
+                    <div class="net-details">{{ vm.networks_details|default(vm.networks)|default('N/A') }}</div>
+                    {% endif %}
+                    
+                    {% if vm.primary_ip or vm.ipv4 %}
+                    <h4>Indirizzi IP</h4>
+                    <div class="net-details">{{ vm.primary_ip|default('') }} {{ vm.ipv4|default('') }}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% else %}
+        <div class="section">
+            <div class="alert" style="background: #d1ecf1; padding: 20px; border-radius: 8px;">
+                Nessuna VM rilevata o raccolta VM disabilitata.
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Footer -->
         <div class="footer">
-            Generato automaticamente da Proxreporter v2 il {{ date_generated }}
+            <p>Generato automaticamente da <strong>Proxreporter</strong> il {{ date_generated }}</p>
+            <p>Report completo dell'infrastruttura Proxmox VE</p>
         </div>
     </div>
 </body>
