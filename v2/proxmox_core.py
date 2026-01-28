@@ -229,6 +229,7 @@ from proxmox_report import (  # type: ignore
     generate_filename,
     rotate_files,
     ProxmoxBackupIntegrated,
+    SFTPUploader,
 
 )
 
