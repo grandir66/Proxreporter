@@ -841,55 +841,33 @@ def configure_backup_jobs_notification(
 
 
 def attempt_sftp_upload(uploader: SFTPUploader, files: List[str]) -> bool:
+    """
+    Tenta l'upload dei file usando l'uploader.
+    La logica di retry e failover è ora gestita internamente da SFTPUploader.connect().
+    """
     sftp_conf = uploader.config.get("sftp", {})
     base_path = sftp_conf.get("base_path", "/tmp")
 
-    original_host = sftp_conf.get("host")
-    original_port = sftp_conf.get("port")
-
-    attempts: List[Tuple[str, int]] = []
-    if original_host and original_port:
-        attempts.append((original_host, original_port))
-        if original_port != 22:
-            attempts.append((original_host, 22))
-
-    if original_host != SFTP_FALLBACK_HOST:
-        if original_port:
-            attempts.append((SFTP_FALLBACK_HOST, original_port))
-            if original_port != 22:
-                attempts.append((SFTP_FALLBACK_HOST, 22))
+    logger.info("→ Avvio procedura upload SFTP...")
+    
+    try:
+        if uploader.connect():
+            uploader.upload_files(files, base_path)
+            uploader.close()
+            logger.info("✓ Upload SFTP completato con successo")
+            return True
         else:
-            attempts.append((SFTP_FALLBACK_HOST, 22))
-
-    tried: Set[Tuple[str, int]] = set()
-
-    for host_try, port_try in attempts:
-        if (host_try, port_try) in tried:
-            continue
-        tried.add((host_try, port_try))
-        logger.info(f"→ Tentativo upload SFTP {host_try}:{port_try}")
-        sftp_conf["host"] = host_try
-        sftp_conf["port"] = port_try
+            # Messaggio di errore già loggato da connect()
+            logger.error("✗ Impossibile completare l'upload SFTP.")
+            return False
+            
+    except Exception as exc:
+        logger.error(f"⚠ Errore critico durante upload SFTP: {exc}")
         try:
-            if uploader.connect():
-                uploader.upload_files(files, base_path)
-                uploader.close()
-                logger.info("✓ Upload SFTP completato")
-                return True
-        except Exception as exc:
-            logger.info(f"   ⚠ Upload fallito su {host_try}:{port_try}: {exc}")
-        finally:
-            try:
-                uploader.close()
-            except Exception:
-                pass
-
-    logger.info("✗ Tutti i tentativi di upload SFTP sono falliti")
-    if original_host is not None:
-        sftp_conf["host"] = original_host
-    if original_port is not None:
-        sftp_conf["port"] = original_port
-    return False
+             uploader.close()
+        except Exception:
+             pass
+        return False
 
 
 
@@ -2955,6 +2933,9 @@ def main() -> None:
                 ftp_pass = _decrypt_field("sftp", "password")
                 if ftp_pass: decrypted_config_override.setdefault("sftp", {})["password"] = ftp_pass
 
+                ftp_fallback_pass = _decrypt_field("sftp", "fallback_password")
+                if ftp_fallback_pass: decrypted_config_override.setdefault("sftp", {})["fallback_password"] = ftp_fallback_pass
+
                 smtp_pass = _decrypt_field("smtp", "password")
                 if smtp_pass: decrypted_config_override.setdefault("smtp", {})["password"] = smtp_pass
                 
@@ -3064,6 +3045,8 @@ def main() -> None:
             if "sftp" in decrypted_config_override:
                  if decrypted_config_override["sftp"].get("password"):
                      config["sftp"]["password"] = decrypted_config_override["sftp"]["password"]
+                 if decrypted_config_override["sftp"].get("fallback_password"):
+                     config["sftp"]["fallback_password"] = decrypted_config_override["sftp"]["fallback_password"]
             
             if "smtp" in decrypted_config_override:
                  # SMTP config is fully replaced later, so we update file_config directly
