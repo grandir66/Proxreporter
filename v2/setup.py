@@ -612,15 +612,25 @@ def main() -> None:
     print("-"*50)
     
     # Deploy scripts
-    default_install_dir = Path("/opt/proxreport")
+    # Deploy scripts (o in-place)
+    # Se siamo già nella cartella con i file, proponiamo quella come default
+    default_install_dir = Path.cwd() if (Path.cwd() / "proxmox_core.py").exists() else Path("/opt/proxreport")
+    
     install_dir_input = prompt(
         "Directory installazione script",
         default=str(default_install_dir),
     )
     install_dir = Path(install_dir_input).expanduser().resolve()
     
-    # Copia file
-    script_path = str(deploy_scripts(install_dir))
+    # Check In-Place vs Deploy
+    script_path = ""
+    
+    if (Path.cwd() / "proxmox_core.py").exists() and install_dir == Path.cwd():
+         print(f"ℹ Installazione In-Place rilevata in {install_dir}. Salto la copia dei file.")
+         script_path = str(install_dir / "proxmox_core.py")
+    else:
+         # Copia file esterna
+         script_path = str(deploy_scripts(install_dir))
 
     # Genera comando cron e config
     command, custom_output_dir = setup_v2(script_path)
