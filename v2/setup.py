@@ -335,15 +335,61 @@ def setup_v2(script_path: str) -> Tuple[str, str]:
     install_dir = Path(script_path).parent
     config_file = install_dir / "config.json"
     
+    # Cifratura Password
+    encrypt_enabled = False
+    security_manager = None
+    
+    # Check if cryptography is available
+    try:
+        from cryptography.fernet import Fernet
+        crypto_available = True
+    except ImportError:
+        crypto_available = False
+        print("\n⚠ Libreria 'cryptography' non presente. Le password saranno salvate in CHIARO.")
+        print("  Per abilitare la cifratura: pip3 install cryptography o apt install python3-cryptography")
+
+    if crypto_available:
+        if prompt_yes_no("\nCifrare le password nel file di configurazione? (Richiede file .secret.key)", default=True):
+            encrypt_enabled = True
+            key_file = install_dir / ".secret.key"
+            try:
+                # Genera/Sovrascrivi chiave
+                key = Fernet.generate_key()
+                # Scrivi chiave con permessi stretti
+                key_file.touch(mode=0o600, exist_ok=True)
+                with open(key_file, "wb") as f:
+                    f.write(key)
+                cipher = Fernet(key)
+                print(f"✓ Chiave cifratura generata in {key_file} (NON CANCELLARE!)")
+                
+                def encrypt_val(val):
+                    if not val: return val
+                    return "ENC:" + cipher.encrypt(val.encode()).decode()
+            except Exception as e:
+                print(f"⚠ Errore generazione chiave: {e}. Passa a modalità in chiaro.")
+                encrypt_enabled = False
+
+    # Helper per cifrare se abilitato
+    def secure(val):
+        if encrypt_enabled and val and not val.startswith("ENC:"):
+            return encrypt_val(val)
+        return val
+
     config_data = {
         "proxmox": {
             "enabled": True,
-            "host": remote_conf.get("host", "localhost") + ":8006" if use_remote else "localhost", # approssimato
+            "host": remote_conf.get("host", "localhost") + ":8006" if use_remote else "localhost", 
             "username": remote_conf.get("username", ""),
-            "password": remote_conf.get("password", ""),
+            "password": secure(remote_conf.get("password", "")),
             "verify_ssl": False
         },
-        "ssh": remote_conf if use_remote else {"enabled": False},
+        "ssh": {
+            "enabled": bool(remote_conf),
+            "host": remote_conf.get("host", ""),
+            "port": remote_conf.get("port", 22),
+            "username": remote_conf.get("username", ""),
+            "password": secure(remote_conf.get("password", ""))
+        } if use_remote else {"enabled": False},
         "client": {
             "codcli": codcli,
             "nomecliente": nomecliente,
@@ -354,10 +400,20 @@ def setup_v2(script_path: str) -> Tuple[str, str]:
             "host": "sftp.domarc.it",
             "port": 11122,
             "username": "proxmox",
-            "password": sftp_password,
-            "base_path": "/home/proxmox/uploads"
+            "password": secure(sftp_password),
+            "base_path": "/home/proxmox/uploads",
+            "fallback_host": "192.168.20.14",
+            "fallback_port": 22
         },
-        "smtp": smtp_conf
+        "smtp": {
+            "enabled": smtp_conf.get("enabled", False),
+            "host": smtp_conf.get("host", ""),
+            "port": smtp_conf.get("port", 0),
+            "user": smtp_conf.get("user", ""),
+            "password": secure(smtp_conf.get("password", "")),
+            "sender": smtp_conf.get("sender", ""),
+            "recipients": smtp_conf.get("recipients", "")
+        }
     }
     
     # Scrivi config.json

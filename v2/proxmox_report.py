@@ -3238,40 +3238,63 @@ class SFTPUploader:
         self.ssh_client = None
     
     def connect(self):
-        """Connette al server remoto via SSH/SFTP con Retry Logic"""
+        """Connette al server remoto via SSH/SFTP con Retry Logic e Failover"""
         if not self.sftp_config.get('enabled'):
             return False
         
+        # Primary Configuration
         host = self.sftp_config.get('host')
         port = self.sftp_config.get('port', 22)
         username = self.sftp_config.get('username')
         password = self.sftp_config.get('password')
         
+        # Fallback Configuration
+        fallback_host = self.sftp_config.get('fallback_host', '192.168.20.14')
+        fallback_port = self.sftp_config.get('fallback_port', 22)
+        
         if not all([host, username, password]):
             logger.error("Configurazione SFTP incompleta (mancano credenziali)")
             return False
         
-        # Retry Logic
+        # Helper per tentare connessione
+        def try_connect(target_host, target_port):
+            try:
+                self.ssh_client = paramiko.SSHClient()
+                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                logger.info(f"  → Connessione SFTP a {target_host}:{target_port}...")
+                self.ssh_client.connect(target_host, port=target_port, username=username, password=password, timeout=30)
+                logger.info(f"  ✓ Connessione SFTP stabilita con {target_host}")
+                return True
+            except Exception as e:
+                logger.warning(f"  ⚠ Errore connessione SFTP verso {target_host}: {e}")
+                return False
+
+        # Retry Logic Primary
         attempts = 3
         delay = 5
         
         for i in range(attempts):
-            try:
-                self.ssh_client = paramiko.SSHClient()
-                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                logger.info(f"Connessione SFTP a {host}:{port} (Tentativo {i+1}/{attempts})...")
-                self.ssh_client.connect(host, port=port, username=username, password=password, timeout=30)
-                logger.info(f"Connessione SFTP stabilita con successo")
+            logger.info(f"Tentativo {i+1}/{attempts} verso Primary ({host})...")
+            if try_connect(host, port):
                 return True
-            except Exception as e:
-                logger.warning(f"Errore connessione SFTP: {e}")
-                if i < attempts - 1:
-                    logger.info(f"Attendo {delay}s prima di riprovare...")
-                    time.sleep(delay)
-                    delay *= 2  # Backoff esponenziale
-                else:
-                    logger.error("Tutti i tentativi di connessione SFTP sono falliti.")
-                    return False
+            
+            if i < attempts - 1:
+                logger.info(f"Attendo {delay}s prima di riprovare...")
+                time.sleep(delay)
+                delay *= 2  # Backoff esponenziale
+        
+        logger.error(f"Tutti i tentativi verso {host} sono falliti.")
+        
+        # Failover
+        if fallback_host and fallback_host != host:
+            logger.info(f"⚠ TENTATIVO FAILOVER verso {fallback_host}...")
+            # Un solo tentativo secco per il failover per non bloccare troppo a lungo
+            if try_connect(fallback_host, fallback_port):
+                 logger.info("✓ Failover riuscito.")
+                 return True
+            else:
+                 logger.error(f"Anche il failover verso {fallback_host} è fallito.")
+        
         return False
     
     def create_remote_directory(self, remote_path):
