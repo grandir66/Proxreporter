@@ -2915,28 +2915,38 @@ def main() -> None:
                 logger.info(f"Decifratura configurazione {config_file}...")
                 sec_manager = SecurityManager(key_file=config_file.parent / ".secret.key")
                 
-                def _decrypt_field(section, key):
-                     sec_data = file_config.get(section, {})
-                     if sec_data.get(f"{key}_encrypted"):
-                         val = sec_data.get(key)
-                         if val:
-                             return sec_manager.decrypt(val)
-                     return None
+                def _decrypt_recursive(obj):
+                    if isinstance(obj, dict):
+                        for k, v in obj.items(): obj[k] = _decrypt_recursive(v)
+                    elif isinstance(obj, list):
+                        for idx, v in enumerate(obj): obj[idx] = _decrypt_recursive(v)
+                    elif isinstance(obj, str) and obj.startswith("ENC:"):
+                        try:
+                            # Use existing sec_manager
+                            return sec_manager.decrypt(obj)
+                        except: return obj
+                    return obj
+
+                # Trigger decryption
+                _decrypt_recursive(file_config)
 
                 # Salviamo i valori decifrati in un dict separato per fare override dopo
-                p_pass = _decrypt_field("proxmox", "password")
+                def _get_val(section, key):
+                    return file_config.get(section, {}).get(key)
+
+                p_pass = _get_val("proxmox", "password")
                 if p_pass: decrypted_config_override.setdefault("proxmox", {})["password"] = p_pass
                 
-                s_pass = _decrypt_field("ssh", "password")
+                s_pass = _get_val("ssh", "password")
                 if s_pass: decrypted_config_override.setdefault("ssh", {})["password"] = s_pass
                 
-                ftp_pass = _decrypt_field("sftp", "password")
+                ftp_pass = _get_val("sftp", "password")
                 if ftp_pass: decrypted_config_override.setdefault("sftp", {})["password"] = ftp_pass
 
-                ftp_fallback_pass = _decrypt_field("sftp", "fallback_password")
-                if ftp_fallback_pass: decrypted_config_override.setdefault("sftp", {})["fallback_password"] = ftp_fallback_pass
+                f_pass = _get_val("sftp", "fallback_password")
+                if f_pass: decrypted_config_override.setdefault("sftp", {})["fallback_password"] = f_pass
 
-                smtp_pass = _decrypt_field("smtp", "password")
+                smtp_pass = _get_val("smtp", "password")
                 if smtp_pass: decrypted_config_override.setdefault("smtp", {})["password"] = smtp_pass
                 
                 logger.info("✓ Decifratura completata in memoria")
