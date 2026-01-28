@@ -268,7 +268,7 @@ def setup_v2(script_path: str) -> Tuple[str, str]:
     # SFTP Configuration
     print("\n[Configurazione SFTP]")
     print(f"  Host: sftp.domarc.it (default)")
-    print(f"  Utente: proxmox (nascosto)")
+    print(f"  Utente: ***** (nascosto)")
     
     sftp_password = prompt_password("Password SFTP (Obbligatoria)", required=True)
     
