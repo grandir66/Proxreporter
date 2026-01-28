@@ -15,6 +15,15 @@ The system is designed to run directly on the Proxmox host (or remotely via SSH/
 -   **Auto-Update**: Capable of self-updating from the repository to ensure the latest features and fixes are applied.
 -   **Low Footprint**: Written in Python 3 with minimal external dependencies.
 
+## Before You Start (Requirements)
+
+Before running the installation, ensure you have the following information ready:
+
+1.  **SFTP Password**: The password for the `proxmox` user on `sftp.domarc.it`.
+2.  **Client Code**: A short code to identify this installation (e.g., `CUST01`).
+3.  **Client Name**: The full name of the client.
+4.  **(Optional) SMTP Details**: If you want email reports, you'll need the Host, Port, User, and Password for the email account.
+
 ## Installation
 
 ### Quick Install (Recommended)

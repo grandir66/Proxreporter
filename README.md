@@ -7,5 +7,5 @@ Please refer to [v2/README.md](v2/README.md) for the latest version and installa
 ## Quick Install (V2)
 
 ```bash
-wget -O - https://raw.githubusercontent.com/grandir66/Proxreporter/main/v2/install.sh | bash
+wget -q -O install.sh https://raw.githubusercontent.com/grandir66/Proxreporter/main/v2/install.sh && bash install.sh
 ```
