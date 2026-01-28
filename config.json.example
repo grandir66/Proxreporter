@@ -30,13 +30,14 @@
     },
     "smtp": {
         "enabled": false,
-        "host": "smtp.gmail.com",
-        "port": 587,
-        "user": "",
+        "host": "esva.domarc.it",
+        "port": 25,
+        "user": "smtp.domarc",
         "password": "",
-        "sender": "",
+        "sender": "proxreporter@domarc.it",
         "recipients": "",
-        "use_tls": true
+        "use_tls": false,
+        "use_ssl": false
     },
     "system": {
         "output_directory": "/var/log/proxreporter",

@@ -310,14 +310,25 @@ def setup_interactive(script_path: str) -> Tuple[str, str]:
     if prompt_yes_no("Abilitare auto-aggiornamento script prima di ogni esecuzione?", default=True):
         args.append("--auto-update")
 
-    # Email Config
+    # Email Config - Default SMTP credentials (obfuscated)
+    def _get_default_smtp_pw():
+        """Decode obfuscated default SMTP password."""
+        import base64
+        _k = "PROXREPORTER"
+        _d = base64.b64decode("Yg0FOxd9YikaOQ==")
+        return ''.join(chr(b ^ ord(_k[i % len(_k)])) for i, b in enumerate(_d))
+    
     smtp_conf = {"enabled": False}
     if prompt_yes_no("\nConfigurare invio report via email?"):
-        smtp_host = prompt("SMTP Host", default="smtp.gmail.com")
-        smtp_port = prompt("SMTP Port", default="587")
-        smtp_user = prompt("SMTP Username")
-        smtp_password = prompt_password("SMTP Password", required=True)
-        smtp_sender = prompt("Email Mittente", default=smtp_user)
+        smtp_host = prompt("SMTP Host", default="esva.domarc.it")
+        smtp_port = prompt("SMTP Port", default="25")
+        smtp_user = prompt("SMTP Username", default="smtp.domarc")
+        print("  Password di default disponibile (premi INVIO per usarla)")
+        smtp_password = prompt_password("SMTP Password", required=False)
+        if not smtp_password:
+            smtp_password = _get_default_smtp_pw()
+            print("  → Usando credenziali di default")
+        smtp_sender = prompt("Email Mittente", default="proxreporter@domarc.it")
         smtp_recipients = prompt("Destinatari (separati da virgola)")
         
         smtp_conf = {
@@ -327,7 +338,9 @@ def setup_interactive(script_path: str) -> Tuple[str, str]:
             "user": smtp_user,
             "password": smtp_password,
             "sender": smtp_sender,
-            "recipients": smtp_recipients
+            "recipients": smtp_recipients,
+            "use_tls": False,
+            "use_ssl": False
         }
 
 
@@ -419,13 +432,14 @@ def setup_interactive(script_path: str) -> Tuple[str, str]:
         },
         "smtp": {
             "enabled": smtp_conf.get("enabled", False),
-            "host": smtp_conf.get("host", "smtp.gmail.com"),
-            "port": smtp_conf.get("port", 587),
-            "user": smtp_conf.get("user", ""),
+            "host": smtp_conf.get("host", "esva.domarc.it"),
+            "port": smtp_conf.get("port", 25),
+            "user": smtp_conf.get("user", "smtp.domarc"),
             "password": secure(smtp_conf.get("password", "")),
-            "sender": smtp_conf.get("sender", ""),
+            "sender": smtp_conf.get("sender", "proxreporter@domarc.it"),
             "recipients": smtp_conf.get("recipients", ""),
-            "use_tls": True
+            "use_tls": False,
+            "use_ssl": False
         },
         "system": {
             "output_directory": output_dir,
