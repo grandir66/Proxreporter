@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
-Proxmox Core Reporter (cron-ready edition)
+Proxreporter - Proxmox Infrastructure Reporter
 
-Script pensato per girare senza file di configurazione, sia in locale sul nodo Proxmox
-sia interrogando un host remoto via API/SSH. Le credenziali SFTP restano hardcoded,
-mentre host/utente/password per l'accesso remoto vengono passati da riga di comando.
+Software di monitoraggio e reporting per infrastrutture Proxmox VE.
+Raccoglie informazioni su VM, container, host, storage e networking,
+generando report CSV e HTML con upload automatico via SFTP.
+
+Sviluppatore: Riccardo Grandi
+Proprietario: Domarc SRL
+Copyright (c) 2024-2026 Domarc SRL - Tutti i diritti riservati.
+
+L'utilizzo, la riproduzione o la distribuzione non autorizzata sono vietati.
 
 Esempi:
   • solo locale: python3 proxmox_core.py --codcli 99999 --nomecliente RG

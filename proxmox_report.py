@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """
-Proxmox Local Report Generator
-Versione che funziona direttamente sull'host Proxmox
-Genera report CSV delle VM attive, caratteristiche host e cluster
-Copia file su server remoto via SFTP in cartella codcli_nomecliente
-Include backup configurazione nella stessa cartella
+Proxreporter - Proxmox Local Report Generator
+
+Software di monitoraggio e reporting per infrastrutture Proxmox VE.
+Genera report CSV delle VM attive, caratteristiche host e cluster.
+Copia file su server remoto via SFTP in cartella codcli_nomecliente.
+Include backup configurazione nella stessa cartella.
+
+Sviluppatore: Riccardo Grandi
+Proprietario: Domarc SRL
+Copyright (c) 2024-2026 Domarc SRL - Tutti i diritti riservati.
+
+L'utilizzo, la riproduzione o la distribuzione non autorizzata sono vietati.
 
 Utilizzo:
     python3 proxmox_report.py

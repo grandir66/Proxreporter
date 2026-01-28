@@ -1,3 +1,13 @@
+"""
+Proxreporter - Email Sender Module
+
+Modulo per l'invio di report via email SMTP.
+
+Sviluppatore: Riccardo Grandi
+Proprietario: Domarc SRL
+Copyright (c) 2024-2026 Domarc SRL - Tutti i diritti riservati.
+"""
+
 import smtplib
 import ssl
 from email.mime.text import MIMEText

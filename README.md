@@ -170,3 +170,17 @@ The V3 modular version provides:
 - Comprehensive unit tests
 
 See [src/README.md](src/README.md) for detailed V3 documentation.
+
+---
+
+## License & Credits
+
+**Proxreporter** - Software di monitoraggio e reporting per infrastrutture Proxmox VE
+
+- **Sviluppatore**: Riccardo Grandi
+- **Proprietario**: Domarc SRL
+
+© 2024-2026 **Domarc SRL** - Tutti i diritti riservati.
+
+Questo software e il relativo codice sorgente sono di proprietà esclusiva di Domarc SRL.
+L'utilizzo, la riproduzione o la distribuzione non autorizzata sono vietati.
