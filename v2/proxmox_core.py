@@ -918,8 +918,8 @@ def build_config(
             "password_encrypted": False,
         },
         "client": {
-            "codcli": codcli,
-            "nomecliente": nomecliente,
+            "codcli": codcli or "",  # Usa stringa vuota se None per permettere merge
+            "nomecliente": nomecliente or "",  # Usa stringa vuota se None per permettere merge
             "server_identifier": server_identifier,
         },
         "sftp": {
@@ -2970,15 +2970,22 @@ def main() -> None:
 
     # Merge Decrypted File Config (riempie i vuoti lasciati dalla CLI)
     def _merge_config(section, target_cfg, source_cfg):
-        if section not in source_cfg: return
+        if section not in source_cfg: 
+            return
+        if section not in target_cfg:
+            target_cfg[section] = {}
         for k, v in source_cfg[section].items():
-            if v is not None:
-                # Se il valore nel target è vuoto o default, usa quello del file
-                if not target_cfg[section].get(k):
+            if v is not None and v != "":
+                # Se il valore nel target è vuoto, None, o stringa vuota, usa quello del file
+                current_val = target_cfg[section].get(k)
+                if current_val is None or current_val == "":
                     target_cfg[section][k] = v
 
     for sec in ["proxmox", "ssh", "sftp", "client", "system", "features"]:
         _merge_config(sec, config, file_config)
+    
+    # Debug: log valori client dopo merge
+    logger.info(f"  Config client dopo merge: codcli='{config.get('client', {}).get('codcli')}', nomecliente='{config.get('client', {}).get('nomecliente')}'")
     
     # Caso speciale SMTP (piena sostituzione se presente nel file)
     if "smtp" in file_config:
