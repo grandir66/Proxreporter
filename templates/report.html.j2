@@ -418,43 +418,258 @@
             </table>
         </div>
 
-        <!-- Network -->
-        {% if hosts[0].network is defined and hosts[0].network %}
+        <!-- Network Configuration -->
         <div class="section">
             <h2>Configurazione Network</h2>
             {% for host in hosts %}
-            {% if host.network %}
             <h3>{{ host.hostname }}</h3>
+            
+            {% set network_data = host.network|default([]) %}
+            {% if network_data %}
+            
+            <!-- Network Summary -->
+            <div style="margin-bottom: 15px;">
+                {% set physical_count = network_data|selectattr('category', 'equalto', 'physical')|list|length %}
+                {% set bridge_count = network_data|selectattr('category', 'equalto', 'bridge')|list|length %}
+                {% set bond_count = network_data|selectattr('category', 'equalto', 'bond')|list|length %}
+                {% set vlan_count = network_data|selectattr('category', 'equalto', 'vlan')|list|length %}
+                <span class="badge badge-info">{{ physical_count }} Fisiche</span>
+                <span class="badge badge-secondary">{{ bridge_count }} Bridge</span>
+                {% if bond_count > 0 %}<span class="badge badge-warning">{{ bond_count }} Bond</span>{% endif %}
+                {% if vlan_count > 0 %}<span class="badge badge-info">{{ vlan_count }} VLAN</span>{% endif %}
+            </div>
+            
+            <!-- Physical Interfaces -->
+            {% set physical_ifaces = network_data|selectattr('category', 'equalto', 'physical')|list %}
+            {% if physical_ifaces %}
+            <h4>Interfacce Fisiche</h4>
             <table>
                 <thead>
                     <tr>
                         <th>Interfaccia</th>
-                        <th>Tipo</th>
-                        <th>Indirizzo IP</th>
-                        <th>Gateway</th>
-                        <th>Bridge/Bond</th>
-                        <th>VLAN</th>
+                        <th>MAC Address</th>
+                        <th>Velocità</th>
+                        <th>Duplex</th>
+                        <th>Link</th>
                         <th>Stato</th>
+                        <th>IP Address</th>
+                        <th>Bridge</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for net in host.network %}
+                    {% for net in physical_ifaces %}
                     <tr>
                         <td><strong>{{ net.iface|default(net.name)|default('N/A') }}</strong></td>
-                        <td><span class="badge badge-info">{{ net.type|default('N/A') }}</span></td>
-                        <td>{{ net.address|default(net.cidr)|default('N/A') }}{% if net.netmask %}/{{ net.netmask }}{% endif %}</td>
-                        <td>{{ net.gateway|default('-') }}</td>
-                        <td>{{ net.bridge_ports|default(net.slaves)|default('-') }}</td>
-                        <td>{{ net.vlan_id|default(net['vlan-id'])|default('-') }}</td>
-                        <td><span class="badge {{ 'badge-success' if net.active else 'badge-secondary' }}">{{ 'Up' if net.active else 'Down' }}</span></td>
+                        <td><code style="font-size: 0.85em;">{{ net.mac_address|default(net.hwaddr)|default('-') }}</code></td>
+                        <td>
+                            {% if net.speed_mbps %}
+                                {% set speed = net.speed_mbps|int %}
+                                {% if speed >= 10000 %}
+                                    <span class="badge badge-success">{{ (speed/1000)|round(0)|int }} Gb/s</span>
+                                {% elif speed >= 1000 %}
+                                    <span class="badge badge-info">{{ (speed/1000)|round(0)|int }} Gb/s</span>
+                                {% else %}
+                                    <span class="badge badge-secondary">{{ speed }} Mb/s</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="badge badge-secondary">-</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ net.duplex|default('-') }}</td>
+                        <td>
+                            {% if net.link_detected %}
+                                <span class="badge {{ 'badge-success' if net.link_detected|lower == 'yes' else 'badge-danger' }}">
+                                    {{ 'Link' if net.link_detected|lower == 'yes' else 'No Link' }}
+                                </span>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% set state = net.state|default(net.active)|default('') %}
+                            <span class="badge {{ 'badge-success' if state|upper == 'UP' or state == true else 'badge-secondary' }}">
+                                {{ state|upper if state is string else ('UP' if state else 'DOWN') }}
+                            </span>
+                        </td>
+                        <td>{{ net.ip4|default(net.address)|default(net.ip)|default('-') }}</td>
+                        <td>{{ net.bridge|default('-') }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
             {% endif %}
+            
+            <!-- Bridges -->
+            {% set bridge_ifaces = network_data|selectattr('category', 'equalto', 'bridge')|list %}
+            {% if bridge_ifaces %}
+            <h4 style="margin-top: 25px;">Bridge</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Bridge</th>
+                        <th>Indirizzo IP</th>
+                        <th>Netmask</th>
+                        <th>Gateway</th>
+                        <th>Porte/Membri</th>
+                        <th>VLAN Aware</th>
+                        <th>Stato</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for net in bridge_ifaces %}
+                    <tr>
+                        <td><strong>{{ net.iface|default(net.name)|default('N/A') }}</strong></td>
+                        <td>{{ net.ip4|default(net.address)|default(net.cidr)|default('-') }}</td>
+                        <td>{{ net.netmask|default('-') }}</td>
+                        <td>{{ net.gateway|default('-') }}</td>
+                        <td>
+                            {% set members = net.bridge_ports|default(net.members)|default(net.slaves)|default('') %}
+                            {% if members %}
+                                <code style="font-size: 0.85em;">{{ members }}</code>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if net.bridge_vlan_aware or net.vlan_aware %}
+                                <span class="badge badge-info">VLAN Aware</span>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% set state = net.state|default(net.active)|default('') %}
+                            <span class="badge {{ 'badge-success' if state|upper == 'UP' or state == true else 'badge-secondary' }}">
+                                {{ state|upper if state is string else ('UP' if state else 'DOWN') }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+            
+            <!-- Bonds -->
+            {% set bond_ifaces = network_data|selectattr('category', 'equalto', 'bond')|list %}
+            {% if bond_ifaces %}
+            <h4 style="margin-top: 25px;">Bond/Aggregazione</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Bond</th>
+                        <th>Modalità</th>
+                        <th>Slave Interfaces</th>
+                        <th>Indirizzo IP</th>
+                        <th>MAC Address</th>
+                        <th>Stato</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for net in bond_ifaces %}
+                    <tr>
+                        <td><strong>{{ net.iface|default(net.name)|default('N/A') }}</strong></td>
+                        <td>
+                            {% set mode = net.bond_mode|default(net.mode)|default('') %}
+                            {% if mode %}
+                                <span class="badge badge-warning">{{ mode }}</span>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td><code style="font-size: 0.85em;">{{ net.slaves|default(net.members)|default('-') }}</code></td>
+                        <td>{{ net.ip4|default(net.address)|default('-') }}</td>
+                        <td><code style="font-size: 0.85em;">{{ net.mac_address|default(net.hwaddr)|default('-') }}</code></td>
+                        <td>
+                            {% set state = net.state|default(net.active)|default('') %}
+                            <span class="badge {{ 'badge-success' if state|upper == 'UP' or state == true else 'badge-secondary' }}">
+                                {{ state|upper if state is string else ('UP' if state else 'DOWN') }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+            
+            <!-- VLANs -->
+            {% set vlan_ifaces = network_data|selectattr('category', 'equalto', 'vlan')|list %}
+            {% if vlan_ifaces %}
+            <h4 style="margin-top: 25px;">VLAN</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Interfaccia</th>
+                        <th>VLAN ID</th>
+                        <th>Parent Interface</th>
+                        <th>Indirizzo IP</th>
+                        <th>Gateway</th>
+                        <th>Stato</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for net in vlan_ifaces %}
+                    <tr>
+                        <td><strong>{{ net.iface|default(net.name)|default('N/A') }}</strong></td>
+                        <td><span class="badge badge-info">{{ net.vlan_id|default(net.tag)|default(net['vlan-id'])|default('-') }}</span></td>
+                        <td>{{ net.vlan_raw_device|default(net.bridge)|default('-') }}</td>
+                        <td>{{ net.ip4|default(net.address)|default('-') }}</td>
+                        <td>{{ net.gateway|default('-') }}</td>
+                        <td>
+                            {% set state = net.state|default(net.active)|default('') %}
+                            <span class="badge {{ 'badge-success' if state|upper == 'UP' or state == true else 'badge-secondary' }}">
+                                {{ state|upper if state is string else ('UP' if state else 'DOWN') }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+            
+            <!-- Other interfaces (if any) -->
+            {% set other_ifaces = network_data|rejectattr('category', 'equalto', 'physical')|rejectattr('category', 'equalto', 'bridge')|rejectattr('category', 'equalto', 'bond')|rejectattr('category', 'equalto', 'vlan')|list %}
+            {% if other_ifaces %}
+            <h4 style="margin-top: 25px;">Altre Interfacce</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Interfaccia</th>
+                        <th>Tipo</th>
+                        <th>Categoria</th>
+                        <th>Indirizzo IP</th>
+                        <th>MAC Address</th>
+                        <th>Stato</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for net in other_ifaces %}
+                    <tr>
+                        <td><strong>{{ net.iface|default(net.name)|default('N/A') }}</strong></td>
+                        <td>{{ net.type|default('-') }}</td>
+                        <td><span class="badge badge-secondary">{{ net.category|default('other') }}</span></td>
+                        <td>{{ net.ip4|default(net.address)|default('-') }}</td>
+                        <td><code style="font-size: 0.85em;">{{ net.mac_address|default(net.hwaddr)|default('-') }}</code></td>
+                        <td>
+                            {% set state = net.state|default(net.active)|default('') %}
+                            <span class="badge {{ 'badge-success' if state|upper == 'UP' or state == true else 'badge-secondary' }}">
+                                {{ state|upper if state is string else ('UP' if state else 'DOWN') }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+            
+            {% else %}
+            <div class="alert" style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-top: 10px;">
+                <strong>Nessuna informazione di rete disponibile</strong> per questo host.
+            </div>
+            {% endif %}
+            
+            {% if not loop.last %}<hr style="margin: 30px 0; border: none; border-top: 2px solid var(--gray-200);">{% endif %}
             {% endfor %}
         </div>
-        {% endif %}
 
         <!-- Virtual Machines -->
         {% if vms %}
