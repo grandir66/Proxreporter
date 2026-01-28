@@ -23,7 +23,6 @@ To install Proxreporter V2 on your Proxmox host, simply run the following comman
 
 ```bash
 wget -q -O install.sh https://raw.githubusercontent.com/grandir66/Proxreporter/main/v2/install.sh && bash install.sh
-
 ```
 
 ### What the Installer Does
@@ -31,19 +30,36 @@ wget -q -O install.sh https://raw.githubusercontent.com/grandir66/Proxreporter/m
 2.  **Clones Repository**: Downloads the latest version of the code to `/opt/proxreport`.
 3.  **Launches Setup**: Starts the interactive `setup.py` wizard to configure the system.
 
-## Setup & Configuration
+## Setup & Configuration Guide
 
-During installation, the interactive setup wizard will prompt you for the following parameters:
+During the installation, the interactive wizard will ask you to configure the system. Here is a guide to the requested parameters:
 
-| Parameter | Description |
-| :--- | :--- |
-| **Output Directory** | The folder where reports and logs will be saved. Default: `/var/log/proxreporter`. |
-| **Client Code (codcli)** | A unique code to identify the client/site (e.g., `CL001`). Used in filenames. |
-| **Client Name** | A human-readable name for the client (e.g., `Acme Corp`). |
-| **Email Reporting?** | `y` to enable SMTP reporting. Limits prompts for Host, User, Pass, Recipients. |
-| **SFTP Password** | **Required**. The password for the `proxmox` user on the collected SFTP server (`sftp.domarc.it`). |
-| **Remote Host?** | `y` if you want to query a *remote* Proxmox server via SSH; `n` to query the *local* host (recommended). |
-| **Auto-Update?** | `y` to check for script updates before every run. Recommended for maintenance-free operation. |
+### 1. General Settings
+*   **Output Directory**: The local folder where CSV reports, logs, and backup archives will be stored.
+    *   *Default*: `/var/log/proxreporter` (Recommended)
+*   **Client Code (codcli)**: A short, unique identifier for the customer or site (e.g., `CUST01`, `ACMECORP`). This code is used in the report filenames.
+*   **Client Name**: The full human-readable name of the customer (e.g., `Acme Corp International`).
+
+### 2. SFTP Configuration (Uploads)
+*   **SFTP Password**: **(Required)** You must enter the password for the centralized SFTP server (`sftp.domarc.it`).
+    *   The scripts authenticate as the `proxmox` user.
+    *   This password is saved securely in `config.json` and is never printed in logs.
+
+### 3. Connection Mode (Local vs Remote)
+*   **Remote Host?**:
+    *   Answer `n` (No) if you are installing this **directly on the Proxmox host** you want to monitor (Recommended for most cases). The script will use local system commands.
+    *   Answer `y` (Yes) if you are installing this on a separate management server and want to monitor a Proxmox node over the network. You will be asked for the remote **IP/Hostname**, **SSH Port**, **User**, and **Password**.
+
+### 4. Updates & Maintenance
+*   **Auto-Update?**:
+    *   Answer `y` (Yes) to allow the script to pull the latest version from GitHub before every execution. This ensures you always have the latest bug fixes and features without manual intervention.
+
+### 5. Email Reporting (Optional)
+*   **Configure Email?**:
+    *   Answer `y` (Yes) to enable sending HTML reports via email.
+    *   You will need to provide SMTP details: **Host** (e.g., smtp.gmail.com), **Port** (e.g., 587), **Username**, **Password**, and a comma-separated list of **Recipients**.
+
+---
 
 ### Configuration File (`config.json`)
 
@@ -72,6 +88,9 @@ You can manually edit this file to change passwords or settings without reinstal
         "username": "proxmox",
         "password": "YOUR_SECRET_PASSWORD_HERE",
         "base_path": "/home/proxmox/uploads"
+    },
+    "smtp": {
+        "enabled": false
     }
 }
 ```
