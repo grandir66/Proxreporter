@@ -1,0 +1,9 @@
+# Proxreporter v3 dependencies
+
+# Core dependencies
+paramiko>=3.0.0
+cryptography>=41.0.0
+
+# Optional - for development/testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
