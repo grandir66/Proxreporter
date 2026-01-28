@@ -2898,58 +2898,47 @@ def main() -> None:
             with open(config_file, "r") as f:
                 file_config = json.load(f)
             
-            # Controlla se c'è qualcosa da decifrare
-            needs_decryption = False
-            for section in ["proxmox", "ssh", "sftp", "smtp"]:
-                if file_config.get(section, {}).get("password_encrypted") or \
-                   file_config.get(section, {}).get("password_encrypted") is True: # Check vari formati
-                   needs_decryption = True
-                   break
-                # Check specifico per campo
-                if file_config.get(section, {}).get("password") and \
-                   file_config.get(section, {}).get("password_encrypted"):
-                    needs_decryption = True
-                    break
+            # Decifratura automatica: cerca campi ENC: e usa .secret.key se presente
+            sec_manager = None
+            key_file = config_file.parent / ".secret.key"
             
-            if needs_decryption:
-                logger.info(f"Decifratura configurazione {config_file}...")
-                sec_manager = SecurityManager(key_file=config_file.parent / ".secret.key")
-                
-                def _decrypt_recursive(obj):
-                    if isinstance(obj, dict):
-                        for k, v in obj.items(): obj[k] = _decrypt_recursive(v)
-                    elif isinstance(obj, list):
-                        for idx, v in enumerate(obj): obj[idx] = _decrypt_recursive(v)
-                    elif isinstance(obj, str) and obj.startswith("ENC:"):
-                        try:
-                            # Use existing sec_manager
-                            return sec_manager.decrypt(obj)
-                        except: return obj
-                    return obj
+            if key_file.exists():
+                try:
+                    sec_manager = SecurityManager(key_file=key_file)
+                except Exception as e:
+                    logger.warning(f"⚠ Impossibile inizializzare SecurityManager: {e}")
 
-                # Trigger decryption
-                _decrypt_recursive(file_config)
+            def _decrypt_recursive(obj):
+                if isinstance(obj, dict):
+                    for k, v in obj.items(): obj[k] = _decrypt_recursive(v)
+                elif isinstance(obj, list):
+                    for idx, v in enumerate(obj): obj[idx] = _decrypt_recursive(v)
+                elif isinstance(obj, str) and obj.startswith("ENC:"):
+                    if not sec_manager:
+                        logger.warning(f"⚠ Trovata password cifrata {obj[:10]}... ma manca la chiave {key_file}")
+                        return obj
+                    try:
+                        return sec_manager.decrypt(obj)
+                    except Exception as e:
+                        logger.error(f"⚠ Errore decifratura: {e}")
+                        return obj
+                return obj
 
-                # Salviamo i valori decifrati in un dict separato per fare override dopo
-                def _get_val(section, key):
-                    return file_config.get(section, {}).get(key)
+            # Applica decifratura a tutto il config
+            _decrypt_recursive(file_config)
+            
+            # Popoliamo decrypted_config_override per compatibilità con i merge successivi
+            def _get_val(section, key):
+                return file_config.get(section, {}).get(key)
 
-                p_pass = _get_val("proxmox", "password")
-                if p_pass: decrypted_config_override.setdefault("proxmox", {})["password"] = p_pass
-                
-                s_pass = _get_val("ssh", "password")
-                if s_pass: decrypted_config_override.setdefault("ssh", {})["password"] = s_pass
-                
-                ftp_pass = _get_val("sftp", "password")
-                if ftp_pass: decrypted_config_override.setdefault("sftp", {})["password"] = ftp_pass
-
-                f_pass = _get_val("sftp", "fallback_password")
-                if f_pass: decrypted_config_override.setdefault("sftp", {})["fallback_password"] = f_pass
-
-                smtp_pass = _get_val("smtp", "password")
-                if smtp_pass: decrypted_config_override.setdefault("smtp", {})["password"] = smtp_pass
-                
-                logger.info("✓ Decifratura completata in memoria")
+            for section in ["proxmox", "ssh", "sftp", "smtp"]:
+                if section in file_config:
+                    for k in file_config[section]:
+                        val = _get_val(section, k)
+                        if val and isinstance(val, str) and not val.startswith("ENC:"):
+                             decrypted_config_override.setdefault(section, {})[k] = val
+            
+            logger.info("✓ Caricamento e decifratura configurazione completati")
 
         except Exception as e:
             logger.warning(f"Errore durante decifratura configurazione: {e}")
