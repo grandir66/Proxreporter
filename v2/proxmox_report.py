@@ -3251,18 +3251,20 @@ class SFTPUploader:
         # Fallback Configuration
         fallback_host = self.sftp_config.get('fallback_host', '192.168.20.14')
         fallback_port = self.sftp_config.get('fallback_port', 22)
+        fallback_username = self.sftp_config.get('fallback_username', username)
+        fallback_password = self.sftp_config.get('fallback_password', password)
         
         if not all([host, username, password]):
             logger.error("Configurazione SFTP incompleta (mancano credenziali)")
             return False
         
         # Helper per tentare connessione
-        def try_connect(target_host, target_port):
+        def try_connect(target_host, target_port, user=username, pwd=password):
             try:
                 self.ssh_client = paramiko.SSHClient()
                 self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 logger.info(f"  → Connessione SFTP a {target_host}:{target_port}...")
-                self.ssh_client.connect(target_host, port=target_port, username=username, password=password, timeout=30)
+                self.ssh_client.connect(target_host, port=target_port, username=user, password=pwd, timeout=30)
                 logger.info(f"  ✓ Connessione SFTP stabilita con {target_host}")
                 return True
             except Exception as e:
@@ -3275,7 +3277,7 @@ class SFTPUploader:
         
         for i in range(attempts):
             logger.info(f"Tentativo {i+1}/{attempts} verso Primary ({host})...")
-            if try_connect(host, port):
+            if try_connect(host, port, user=username, pwd=password):
                 return True
             
             if i < attempts - 1:
@@ -3289,7 +3291,7 @@ class SFTPUploader:
         if fallback_host and fallback_host != host:
             logger.info(f"⚠ TENTATIVO FAILOVER verso {fallback_host}...")
             # Un solo tentativo secco per il failover per non bloccare troppo a lungo
-            if try_connect(fallback_host, fallback_port):
+            if try_connect(fallback_host, fallback_port, user=fallback_username, pwd=fallback_password):
                  logger.info("✓ Failover riuscito.")
                  return True
             else:
