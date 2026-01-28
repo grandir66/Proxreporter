@@ -628,6 +628,13 @@ def main() -> None:
     if (Path.cwd() / "proxmox_core.py").exists() and install_dir == Path.cwd():
          print(f"ℹ Installazione In-Place rilevata in {install_dir}. Salto la copia dei file.")
          script_path = str(install_dir / "proxmox_core.py")
+         
+         # Assicuriamo i permessi corretti anche in-place
+         for pyfile in install_dir.glob("*.py"):
+             try:
+                 pyfile.chmod(0o755)
+             except:
+                 pass
     else:
          # Copia file esterna
          script_path = str(deploy_scripts(install_dir))
