@@ -2089,6 +2089,16 @@ def _finalize_vm_record(vm: Dict[str, Any]) -> Dict[str, Any]:
     record = dict(vm)
 
     record["cpu_percent"] = _format_percent(record.pop("cpu_usage", None))
+    
+    # Preserve raw numeric values for HTML template, format for CSV display
+    record["mem_used_raw"] = record.get("mem_used") or 0
+    record["mem_total_raw"] = record.get("mem_total") or 0
+    record["disk_size_raw"] = record.get("disk_size") or 0
+    record["diskread_raw"] = record.get("diskread") or 0
+    record["diskwrite_raw"] = record.get("diskwrite") or 0
+    record["netin_raw"] = record.get("netin") or 0
+    record["netout_raw"] = record.get("netout") or 0
+    
     record["mem_used"] = _format_bytes(record.get("mem_used"))
     record["mem_total"] = _format_bytes(record.get("mem_total"))
     record["memory_assigned"] = _format_bytes(record.get("memory_assigned"))

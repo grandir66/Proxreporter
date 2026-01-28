@@ -251,7 +251,7 @@
             <div class="stat-card">
                 <div class="stat-value">
                     {% set total_cores = namespace(value=0) %}
-                    {% for vm in vms if vms %}{% set total_cores.value = total_cores.value + (vm.cores|default(0)|int) %}{% endfor %}
+                    {% for vm in vms if vms %}{% set total_cores.value = total_cores.value + (vm.cores|default(0)|int) * (vm.sockets|default(1)|int) %}{% endfor %}
                     {{ total_cores.value }}
                 </div>
                 <div class="stat-label">vCPU Allocate</div>
@@ -259,7 +259,7 @@
             <div class="stat-card">
                 <div class="stat-value">
                     {% set total_ram = namespace(value=0) %}
-                    {% for vm in vms if vms %}{% set total_ram.value = total_ram.value + (vm.mem_total|default(0)|int) %}{% endfor %}
+                    {% for vm in vms if vms %}{% set total_ram.value = total_ram.value + (vm.mem_total_raw|default(0)|int) %}{% endfor %}
                     {{ (total_ram.value / 1073741824)|round(0)|int }} GB
                 </div>
                 <div class="stat-label">RAM Allocata</div>
@@ -501,8 +501,10 @@
                         <td>{{ vm.node }}</td>
                         <td>{{ vm.cores|default(0) }}{% if vm.sockets and vm.sockets|int > 1 %}x{{ vm.sockets }}{% endif %}</td>
                         <td>
-                            {% if vm.mem_total %}
-                                {{ (vm.mem_total|int / 1073741824)|round(1) }} GB
+                            {% if vm.mem_total_raw and vm.mem_total_raw|int > 0 %}
+                                {{ (vm.mem_total_raw|int / 1073741824)|round(1) }} GB
+                            {% elif vm.mem_total and vm.mem_total != '-' %}
+                                {{ vm.mem_total }}
                             {% elif vm.memory_assigned %}
                                 {{ vm.memory_assigned }}
                             {% else %}
@@ -510,8 +512,10 @@
                             {% endif %}
                         </td>
                         <td>
-                            {% if vm.disk_size %}
-                                {{ (vm.disk_size|int / 1073741824)|round(1) }} GB
+                            {% if vm.disk_size_raw and vm.disk_size_raw|int > 0 %}
+                                {{ (vm.disk_size_raw|int / 1073741824)|round(1) }} GB
+                            {% elif vm.disk_size and vm.disk_size != '-' %}
+                                {{ vm.disk_size }}
                             {% else %}
                                 {{ vm.num_disks|default(0) }} disk(s)
                             {% endif %}
@@ -556,9 +560,19 @@
                         <div class="metric"><span class="metric-label">Nodo</span><span class="metric-value">{{ vm.node }}</span></div>
                         <div class="metric"><span class="metric-label">Tipo</span><span class="metric-value">{{ vm.vm_type|default('qemu') }}</span></div>
                         <div class="metric"><span class="metric-label">vCPU</span><span class="metric-value">{{ vm.cores|default(0) }} core{% if vm.sockets and vm.sockets|int > 1 %} x {{ vm.sockets }} socket{% endif %}</span></div>
-                        <div class="metric"><span class="metric-label">RAM Assegnata</span><span class="metric-value">{% if vm.mem_total %}{{ (vm.mem_total|int / 1073741824)|round(1) }} GB{% else %}N/A{% endif %}</span></div>
-                        {% if vm.mem_used %}
-                        <div class="metric"><span class="metric-label">RAM Usata</span><span class="metric-value">{{ (vm.mem_used|int / 1073741824)|round(2) }} GB</span></div>
+                        <div class="metric"><span class="metric-label">RAM Assegnata</span><span class="metric-value">
+                            {% if vm.mem_total_raw and vm.mem_total_raw|int > 0 %}
+                                {{ (vm.mem_total_raw|int / 1073741824)|round(1) }} GB
+                            {% elif vm.mem_total and vm.mem_total != '-' %}
+                                {{ vm.mem_total }}
+                            {% else %}
+                                N/A
+                            {% endif %}
+                        </span></div>
+                        {% if vm.mem_used_raw and vm.mem_used_raw|int > 0 %}
+                        <div class="metric"><span class="metric-label">RAM Usata</span><span class="metric-value">{{ (vm.mem_used_raw|int / 1073741824)|round(2) }} GB</span></div>
+                        {% elif vm.mem_used and vm.mem_used != '-' %}
+                        <div class="metric"><span class="metric-label">RAM Usata</span><span class="metric-value">{{ vm.mem_used }}</span></div>
                         {% endif %}
                         <div class="metric"><span class="metric-label">OS</span><span class="metric-value">{{ vm.ostype|default('N/A') }}</span></div>
                         <div class="metric"><span class="metric-label">BIOS</span><span class="metric-value">{{ vm.bios|default('seabios') }}</span></div>
