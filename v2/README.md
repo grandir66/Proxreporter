@@ -22,7 +22,8 @@ The system is designed to run directly on the Proxmox host (or remotely via SSH/
 To install Proxreporter V2 on your Proxmox host, simply run the following command as `root`. This one-liner handles dependencies, downloading, and configuration.
 
 ```bash
-wget -O - https://raw.githubusercontent.com/grandir66/Proxreporter/main/v2/install.sh | bash
+wget -q https://raw.githubusercontent.com/grandir66/Proxreporter/main/v2/install.sh && bash install.sh
+
 ```
 
 ### What the Installer Does

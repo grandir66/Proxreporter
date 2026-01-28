@@ -20,14 +20,25 @@ fi
 
 # Check requirements
 echo "→ Checking dependencies..."
-DEPS="git python3 python3-venv"
 MISSING=""
-for pkg in $DEPS; do
-    if ! command -v $pkg &> /dev/null && ! dpkg -l $pkg &> /dev/null; then
-         # Basic check, might need refinement for different distros
-         MISSING="$MISSING $pkg"
+
+# Check git
+if ! command -v git &> /dev/null; then
+    MISSING="$MISSING git"
+fi
+
+# Check python3
+if ! command -v python3 &> /dev/null; then
+    MISSING="$MISSING python3"
+fi
+
+# Check python3-venv (module check)
+if command -v python3 &> /dev/null; then
+    if ! python3 -c "import venv" &> /dev/null; then
+        MISSING="$MISSING python3-venv"
     fi
-done
+fi
+
 
 if [ ! -z "$MISSING" ]; then
     echo -e "${RED}Missing dependencies:${NC} $MISSING"
