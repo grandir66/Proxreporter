@@ -183,6 +183,7 @@ def main():
     install_dir = Path(__file__).resolve().parent
     
     # Verifica permessi scrittura
+    if not os.access(install_dir, os.W_OK):
         print(f"⚠ W: Nessun permesso scrittura su {install_dir}. Salto aggiornamento.")
         return # Non uscire con errore, semplicemente salta update nel cron
 
