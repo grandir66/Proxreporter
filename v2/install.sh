@@ -82,11 +82,14 @@ else
     git clone -b $BRANCH "$REPO_URL" "$INSTALL_DIR"
 fi
 
+# Set executable permissions on Python scripts
+echo "→ Setting executable permissions..."
+chmod +x "$INSTALL_DIR/v2/"*.py 2>/dev/null || true
+
 # Run Setup
 echo "→ Running Python Setup..."
 cd "$INSTALL_DIR/v2" || { echo -e "${RED}Directory v2 not found!${NC}"; exit 1; }
 
-# Execute setup.py using the system python3
 # Execute setup.py using the system python3
 python3 setup.py
 
