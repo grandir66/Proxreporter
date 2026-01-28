@@ -2988,16 +2988,19 @@ def main() -> None:
         config["smtp"]["password"] = args.smtp_password
 
     # 6. Validazione Finale e Avvio
-    if not args.codcli or not args.nomecliente:
-        if "--auto-update" in sys.argv:
-            args.codcli, args.nomecliente = "UPDATE", "UPDATE"
-        else:
-            logger.error("✗ Errore: --codcli e --nomecliente obbligatori.")
-            sys.exit(1)
+    # Usa valori CLI se forniti, altrimenti prendi dal config.json
+    final_codcli = args.codcli or config.get("client", {}).get("codcli", "")
+    final_nomecliente = args.nomecliente or config.get("client", {}).get("nomecliente", "")
+    
+    if not final_codcli or not final_nomecliente:
+        logger.error("✗ Errore: codcli e nomecliente obbligatori (via CLI o config.json).")
+        logger.error("  Verifica che config.json contenga la sezione 'client' con 'codcli' e 'nomecliente'.")
+        sys.exit(1)
 
     logger.info("=" * 70)
     logger.info("PROXMOX LOCAL REPORTER (CRON)")
     logger.info("=" * 70)
+    logger.info(f"  Cliente: {final_codcli} - {final_nomecliente}")
     
     setup_logging(debug=False, log_file=output_dir / "proxreporter.log")
     
@@ -3008,7 +3011,7 @@ def main() -> None:
         
     logger.info("=== Start Execution ===")
     try:
-        run_report(config, args.codcli, args.nomecliente, server_identifier, output_dir, args.no_upload)
+        run_report(config, final_codcli, final_nomecliente, server_identifier, output_dir, args.no_upload)
     except Exception as e:
         logger.exception("Errore fatale")
         sys.exit(1)
