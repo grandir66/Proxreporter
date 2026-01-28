@@ -153,10 +153,16 @@ class SecurityManager:
         """Decifra una stringa"""
         if not cipher_text:
             return ""
+        
+        # Rimuovi prefisso se presente
+        raw_cipher = cipher_text
+        if cipher_text.startswith("ENC:"):
+            raw_cipher = cipher_text[4:]
+
         if not self.cipher:
             self.load_or_generate_key()
         try:
-            return self.cipher.decrypt(cipher_text.encode()).decode()
+            return self.cipher.decrypt(raw_cipher.encode()).decode()
         except Exception as e:
             logger.error(f"Errore decifratura: {e}")
             raise
@@ -2833,80 +2839,32 @@ def write_network_csv(
 def main() -> None:
     args = parse_args()
     
-    # -----------------------------------------------------------------------
-    # Gestione Cifratura / Decifratura Configurazione
-    # -----------------------------------------------------------------------
-    config_file = Path(args.config) if args.config else None
+    # 1. Risoluzione Percorso Configurazione
+    config_path = args.config
+    if not config_path:
+        default_config = Path(__file__).resolve().parent / "config.json"
+        if default_config.exists():
+            config_path = str(default_config)
     
-    # Caso 1: Richiesta cifratura (--encrypt-config)
-    if args.encrypt_config:
-        if not config_file or not config_file.exists():
-            logger.error("Devi specificare un file di configurazione esistente con --config per cifrarlo.")
-            sys.exit(1)
-            
-        logger.info(f"Avvio procedura cifratura per {config_file}...")
-        try:
-            # La chiave viene cercata nella stessa cartella del config
-            sec_manager = SecurityManager(key_file=config_file.parent / ".secret.key")
-            sec_manager.load_or_generate_key()
-            
-            with open(config_file, "r") as f:
-                config_data = json.load(f)
-            
-            changed = False
-            
-            def _encrypt_field(section, key):
-                val = config_data.get(section, {}).get(key)
-                encrypted_flag = config_data.get(section, {}).get(f"{key}_encrypted")
-                if val and not encrypted_flag:
-                    logger.info(f"  Cifratura {section} -> {key}")
-                    config_data[section][key] = sec_manager.encrypt(val)
-                    config_data[section][f"{key}_encrypted"] = True
-                    return True
-                return False
+    config_file = Path(config_path) if config_path else None
+    file_config = {}
 
-            if _encrypt_field("proxmox", "password"): changed = True
-            if _encrypt_field("ssh", "password"): changed = True
-            if _encrypt_field("sftp", "password"): changed = True
-            if _encrypt_field("smtp", "password"): changed = True
-            
-            if changed:
-                with open(config_file, "w") as f:
-                    json.dump(config_data, f, indent=4)
-                logger.info("✓ Configurazione cifrata e salvata con successo.")
-                try:
-                    config_file.chmod(0o600)
-                except:
-                    pass
-            else:
-                logger.info("Nessuna password in chiaro da cifrare (o già cifrate).")
-                
-        except Exception as e:
-            logger.error(f"Errore durante la cifratura: {e}")
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
-        
-        # Dopo aver cifrato usciamo
-        sys.exit(0)
-
-    # Caso 2: Caricamento e Decifratura (Runtime normale)
-    decrypted_config_override = {}
-    
+    # 2. Caricamento e Decifratura Iniziale
     if config_file and config_file.exists():
         try:
+            logger.info(f"→ Caricamento configurazione da: {config_file}")
             with open(config_file, "r") as f:
                 file_config = json.load(f)
             
-            # Decifratura automatica: cerca campi ENC: e usa .secret.key se presente
+            # Inizializzazione SecurityManager
             sec_manager = None
             key_file = config_file.parent / ".secret.key"
-            
             if key_file.exists():
                 try:
                     sec_manager = SecurityManager(key_file=key_file)
+                    sec_manager.load_or_generate_key()
                 except Exception as e:
-                    logger.warning(f"⚠ Impossibile inizializzare SecurityManager: {e}")
+                    logger.warning(f"⚠ Errore SecurityManager: {e}")
 
             def _decrypt_recursive(obj):
                 if isinstance(obj, dict):
@@ -2915,79 +2873,83 @@ def main() -> None:
                     for idx, v in enumerate(obj): obj[idx] = _decrypt_recursive(v)
                 elif isinstance(obj, str) and obj.startswith("ENC:"):
                     if not sec_manager:
-                        logger.warning(f"⚠ Trovata password cifrata {obj[:10]}... ma manca la chiave {key_file}")
+                        logger.warning(f"⚠ Campo cifrato trovato ma manca la chiave {key_file}")
                         return obj
                     try:
                         return sec_manager.decrypt(obj)
                     except Exception as e:
-                        logger.error(f"⚠ Errore decifratura: {e}")
+                        logger.error(f"⚠ Errore decifratura campo: {e}")
                         return obj
                 return obj
 
-            # Applica decifratura a tutto il config
+            # Applica decifratura a tutto il file_config in-place
             _decrypt_recursive(file_config)
-            
-            # Popoliamo decrypted_config_override per compatibilità con i merge successivi
-            def _get_val(section, key):
-                return file_config.get(section, {}).get(key)
-
-            for section in ["proxmox", "ssh", "sftp", "smtp"]:
-                if section in file_config:
-                    for k in file_config[section]:
-                        val = _get_val(section, k)
-                        if val and isinstance(val, str) and not val.startswith("ENC:"):
-                             decrypted_config_override.setdefault(section, {})[k] = val
-            
-            logger.info("✓ Caricamento e decifratura configurazione completati")
+            logger.info("✓ Decifratura configurazione completata")
 
         except Exception as e:
-            logger.warning(f"Errore durante decifratura configurazione: {e}")
-            # Non usciamo, magari le password sono in chiaro o passate da CLI
+            logger.warning(f"⚠ Errore caricamento/decifratura config: {e}")
 
+    # 3. Caso Speciale: Cifratura Richiesta (--encrypt-config)
+    if args.encrypt_config:
+        if not config_file or not config_file.exists():
+            logger.error("Specificare un file config esistente con --config per cifrarlo.")
+            sys.exit(1)
+            
+        logger.info(f"Avvio procedura cifratura per {config_file}...")
+        try:
+            sec_manager = SecurityManager(key_file=config_file.parent / ".secret.key")
+            sec_manager.load_or_generate_key()
+            
+            changed = False
+            for section in ["proxmox", "ssh", "sftp", "smtp"]:
+                if section in file_config:
+                    for key in ["password", "fallback_password"]:
+                        val = file_config[section].get(key)
+                        if val and isinstance(val, str) and not val.startswith("ENC:"):
+                            logger.info(f"  Cifratura {section} -> {key}")
+                            file_config[section][key] = "ENC:" + sec_manager.encrypt(val)
+                            changed = True
+            
+            if changed:
+                with open(config_file, "w") as f:
+                    json.dump(file_config, f, indent=4)
+                logger.info("✓ Configurazione cifrata salvata.")
+                try: config_file.chmod(0o600)
+                except: pass
+            else:
+                logger.info("Nessuna password in chiaro trovata.")
+        except Exception as e:
+            logger.error(f"Errore cifratura: {e}")
+            sys.exit(1)
+        sys.exit(0)
+
+    # 4. Inizializzazione Ambiente
     local_hostname = socket.gethostname()
     output_dir = Path(args.output_dir).resolve()
     
-    # Crea tutte le directory necessarie
     ensure_directory(output_dir)
     ensure_directory(output_dir / "csv")
     ensure_directory(output_dir / "backup")
-    
-    # Assicura permessi corretti
     try:
         os.chmod(output_dir, 0o755)
         os.chmod(output_dir / "csv", 0o755)
         os.chmod(output_dir / "backup", 0o755)
-    except Exception:
-        pass  # Ignora errori permessi se non root
+    except: pass
 
+    # 5. Build Final Config (CLI + File Merge)
     remote_host_arg = args.host
-    forced_local = args.local
-    remote_enabled = bool(remote_host_arg) and not forced_local
-
-    api_username = args.username
-    api_password = args.password
-    ssh_port = args.ssh_port
-    sftp_host_override = args.sftp_host
-    sftp_port_override = args.sftp_port
-    sftp_username_override = args.sftp_user
-    sftp_password_override = args.sftp_password
-    sftp_base_path_override = args.sftp_base_path
-    smtp_password_override = args.smtp_password
-
+    remote_enabled = bool(remote_host_arg) and not args.local
+    
     if remote_enabled:
-        if not api_username or not api_password:
-            logger.info("✗ Per l'accesso remoto specifica sia --username che --password")
-            sys.exit(1)
         api_host = remote_host_arg if ":" in remote_host_arg else f"{remote_host_arg}:8006"
         ssh_host = remote_host_arg.split(":")[0]
         server_identifier = ssh_host
     else:
         api_host = "localhost:8006"
         ssh_host = "localhost"
-        api_username = ""
-        api_password = ""
         server_identifier = local_hostname
 
+    # Inizializza con i valori base (CLI ha la priorità)
     config = build_config(
         args.codcli,
         args.nomecliente,
@@ -2995,130 +2957,60 @@ def main() -> None:
         output_dir,
         remote_enabled,
         api_host,
-        api_username,
-        api_password,
+        args.username,
+        args.password,
         ssh_host,
-        ssh_port,
-        sftp_host_override,
-        sftp_port_override,
-        sftp_username_override,
-        sftp_password_override,
-        sftp_base_path_override,
+        args.ssh_port,
+        args.sftp_host,
+        args.sftp_port,
+        args.sftp_user,
+        args.sftp_password,
+        args.sftp_base_path,
     )
 
-    # Carica configurazione da file se specificato o se presente config.json nella stessa directory
-    file_config = {}
-    config_path = args.config
+    # Merge Decrypted File Config (riempie i vuoti lasciati dalla CLI)
+    def _merge_config(section, target_cfg, source_cfg):
+        if section not in source_cfg: return
+        for k, v in source_cfg[section].items():
+            if v is not None:
+                # Se il valore nel target è vuoto o default, usa quello del file
+                if not target_cfg[section].get(k):
+                    target_cfg[section][k] = v
+
+    for sec in ["proxmox", "ssh", "sftp", "client", "system", "features"]:
+        _merge_config(sec, config, file_config)
     
-    # Se non specificato, cerca config.json nella stessa cartella dello script
-    if not config_path:
-        default_config = Path(__file__).parent / "config.json"
-        if default_config.exists():
-            config_path = str(default_config)
-    
-    if config_path and os.path.exists(config_path):
-        try:
-            logger.info(f"→ Caricamento configurazione da: {config_path}")
-            with open(config_path, "r") as f:
-                file_config = json.load(f)
-            
-            # Merge smart: la CLI ha precedenza, ma il file riempie i buchi (specialmente le password)
-            # Merge SFTP
-            if "sftp" in file_config:
-                if not config["sftp"]["password"] and file_config["sftp"].get("password"):
-                    config["sftp"]["password"] = file_config["sftp"]["password"]
-                if not sftp_host_override and file_config["sftp"].get("host"):
-                    config["sftp"]["host"] = file_config["sftp"]["host"]
-                if not sftp_username_override and file_config["sftp"].get("username"):
-                    config["sftp"]["username"] = file_config["sftp"]["username"]
-            
-            # Apply Decrypted Overrides (Highest Priority for file-based config)
-            if "proxmox" in decrypted_config_override:
-                 if decrypted_config_override["proxmox"].get("password"):
-                     config["proxmox"]["password"] = decrypted_config_override["proxmox"]["password"]
-            
-            if "ssh" in decrypted_config_override:
-                 if decrypted_config_override["ssh"].get("password"):
-                     config["ssh"]["password"] = decrypted_config_override["ssh"]["password"]
+    # Caso speciale SMTP (piena sostituzione se presente nel file)
+    if "smtp" in file_config:
+        config["smtp"] = file_config["smtp"]
+    if args.smtp_password:
+        if "smtp" not in config: config["smtp"] = {}
+        config["smtp"]["password"] = args.smtp_password
 
-            if "sftp" in decrypted_config_override:
-                 if decrypted_config_override["sftp"].get("password"):
-                     config["sftp"]["password"] = decrypted_config_override["sftp"]["password"]
-                 if decrypted_config_override["sftp"].get("fallback_password"):
-                     config["sftp"]["fallback_password"] = decrypted_config_override["sftp"]["fallback_password"]
-            
-            if "smtp" in decrypted_config_override:
-                 # SMTP config is fully replaced later, so we update file_config directly
-                 if "smtp" not in file_config: file_config["smtp"] = {}
-                 if decrypted_config_override["smtp"].get("password"):
-                     file_config["smtp"]["password"] = decrypted_config_override["smtp"]["password"]
-            
-            # Merge Client Info (se non passati da CLI, ma CLI è required per ora)
-            # Merge Client Info (se non passati da CLI)
-            if "client" in file_config:
-                client_cfg = file_config["client"]
-                if not args.codcli and client_cfg.get("codcli"):
-                    config["client"]["codcli"] = client_cfg["codcli"]
-                    # Aggiorniamo anche le variabili locali usate dopo
-                    args.codcli = client_cfg["codcli"] 
-                if not args.nomecliente and client_cfg.get("nomecliente"):
-                    config["client"]["nomecliente"] = client_cfg["nomecliente"]
-                    args.nomecliente = client_cfg["nomecliente"]
-            
-            # Update build_config vars since they were immutable strings in function scope, 
-            # but config dict is mutable.
-            # However, run_report uses args.codcli directly.
-
-
-             # Merge SMTP
-            if "smtp" in file_config:
-                config["smtp"] = file_config["smtp"]
-            
-            if smtp_password_override:
-                if "smtp" not in config:
-                    config["smtp"] = {}
-                config["smtp"]["password"] = smtp_password_override
-
-        except Exception as e:
-            logger.info(f"⚠ Errore caricamento config file: {e}")
-
-    
-    # Validation
+    # 6. Validazione Finale e Avvio
     if not args.codcli or not args.nomecliente:
-        # Se stiamo facendo solo auto-update, va bene ignorare
-        args_prelim = sys.argv[1:]
-        if "--auto-update" in args_prelim or "--skip-update" in args_prelim:
-             if not args.codcli: args.codcli = "UPDATE"
-             if not args.nomecliente: args.nomecliente = "UPDATE"
+        if "--auto-update" in sys.argv:
+            args.codcli, args.nomecliente = "UPDATE", "UPDATE"
         else:
-            logger.error("✗ Errore: --codcli e --nomecliente sono obbligatori (o devono essere nel config.json)")
+            logger.error("✗ Errore: --codcli e --nomecliente obbligatori.")
             sys.exit(1)
+
     logger.info("=" * 70)
     logger.info("PROXMOX LOCAL REPORTER (CRON)")
     logger.info("=" * 70)
     
-    # Init Logging
-    setup_logging(debug=False, log_file=Path(args.output_dir) / "proxreporter.log") # Use output dir for log if var log not writable or argument based?
-    # Better: default to /var/log/proxreporter/app.log, fallback to output_dir/app.log?
-    # For now let's use the function default but respect permissions.
+    setup_logging(debug=False, log_file=output_dir / "proxreporter.log")
     
-    # Lock Check
     lock_fd = acquire_lock()
     if not lock_fd:
-        logger.error("Altra istanza in esecuzione. Esco.")
+        logger.error("Altra istanza in esecuzione.")
         sys.exit(1)
         
     logger.info("=== Start Execution ===")
-    
-    target_desc = ssh_host if remote_enabled else local_hostname
-    logger.info(f"Target Proxmox: {target_desc} ({'remoto' if remote_enabled else 'locale'})")
-    logger.info(f"Output directory: {output_dir}")
-    logger.info("") # Keep some visual separation in stdout? Or just rely on logger
-
     try:
         run_report(config, args.codcli, args.nomecliente, server_identifier, output_dir, args.no_upload)
     except Exception as e:
-        logger.exception("Errore fatale durante l'esecuzione")
+        logger.exception("Errore fatale")
         sys.exit(1)
     finally:
         logger.info("=== End Execution ===")

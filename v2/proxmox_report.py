@@ -3670,7 +3670,7 @@ def save_file_with_rotation(filepath, content_func, codcli, nomecliente, file_ty
 # ============================================================================
 
 def load_config(config_file):
-    """Carica file configurazione"""
+    """Carica file configurazione con decifratura password"""
     if not os.path.exists(config_file):
         logger.info(f"✗ File configurazione non trovato: {config_file}")
         return None
@@ -3679,6 +3679,59 @@ def load_config(config_file):
         with open(config_file, 'r', encoding='utf-8') as f:
             config = json.load(f)
         logger.info(f"✓ Configurazione caricata: {config_file}")
+        
+        # Decifratura password se presenti campi cifrati (prefisso ENC:)
+        key_file = Path(config_file).parent / ".secret.key"
+        if key_file.exists():
+            try:
+                from cryptography.fernet import Fernet
+                with open(key_file, 'rb') as kf:
+                    key = kf.read()
+                cipher = Fernet(key)
+                
+                def decrypt_value(val):
+                    """Decifra un singolo valore se inizia con ENC:"""
+                    if isinstance(val, str) and val.startswith("ENC:"):
+                        try:
+                            encrypted_data = val[4:]  # Rimuovi prefisso "ENC:"
+                            return cipher.decrypt(encrypted_data.encode()).decode()
+                        except Exception as e:
+                            logger.warning(f"⚠ Errore decifratura valore: {e}")
+                            return val
+                    return val
+                
+                def decrypt_recursive(obj):
+                    """Decifra ricorsivamente tutti i campi cifrati"""
+                    if isinstance(obj, dict):
+                        for k, v in obj.items():
+                            obj[k] = decrypt_recursive(v)
+                    elif isinstance(obj, list):
+                        for idx, v in enumerate(obj):
+                            obj[idx] = decrypt_recursive(v)
+                    elif isinstance(obj, str) and obj.startswith("ENC:"):
+                        return decrypt_value(obj)
+                    return obj
+                
+                decrypt_recursive(config)
+                logger.info("✓ Decifratura configurazione completata")
+                
+            except ImportError:
+                logger.warning("⚠ Libreria cryptography non disponibile, password cifrate non saranno decifrate")
+            except Exception as e:
+                logger.warning(f"⚠ Errore durante decifratura: {e}")
+        else:
+            # Verifica se ci sono password cifrate senza chiave
+            has_encrypted = False
+            for section in ['sftp', 'ssh', 'proxmox', 'smtp']:
+                if section in config:
+                    for key in ['password', 'fallback_password']:
+                        val = config.get(section, {}).get(key, '')
+                        if isinstance(val, str) and val.startswith('ENC:'):
+                            has_encrypted = True
+                            break
+            if has_encrypted:
+                logger.warning(f"⚠ Password cifrate trovate ma file chiave {key_file} non esiste!")
+        
         return config
     except Exception as e:
         logger.info(f"✗ Errore lettura configurazione: {e}")
