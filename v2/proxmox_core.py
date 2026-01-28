@@ -1005,8 +1005,15 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
         else:
             logger.info(f"  Password SMTP: non configurata (verrà richiesta)")
         
-        # Crea il notification target
-        target_created = configure_smtp_notification(smtp_password, codcli, execution_mode, executor, config)
+        # Crea il notification target SOLO se SMTP è abilitato o password fornita (es. da riga di comando)
+        smtp_enabled = smtp_config.get("enabled", False)
+        
+        # Se disabilitato da config E nessuna password fornita manualmente, salta
+        if not smtp_enabled and not smtp_password:
+             logger.info("  ℹ Configurazione SMTP disabilitata (config.json) e nessuna password fornita via argomenti.")
+             target_created = False
+        else:
+             target_created = configure_smtp_notification(smtp_password, codcli, execution_mode, executor, config)
         
         # Se il target è stato creato con successo, crea il notification matcher
         if target_created:

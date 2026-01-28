@@ -318,12 +318,7 @@ def setup_v2(script_path: str) -> Tuple[str, str]:
             "recipients": smtp_recipients
         }
 
-    if not smtp_conf.get("enabled"):
-        print("\n[Notifiche di Sistema Proxmox]")
-        print("Lo script può configurare automaticamente le notifiche per i backup falliti (System Mail).")
-        if prompt_yes_no("Inserire password SMTP per abilitare queste notifiche?", default=True):
-             extra_pass = prompt_password("SMTP Password")
-             smtp_conf["password"] = extra_pass
+
 
     # Generate config.json (prepara dizionario)
     # Nota: installazione avverrà nella directory dove risiede lo script
