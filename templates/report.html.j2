@@ -424,7 +424,7 @@
             {% for host in hosts %}
             <h3>{{ host.hostname }}</h3>
             
-            {% set network_data = host.network|default([]) %}
+            {% set network_data = host.network_interfaces|default(host.network)|default([]) %}
             {% if network_data %}
             
             <!-- Network Summary -->

@@ -1055,6 +1055,12 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
                     extractor.enrich_host_info_with_commands(host_info, extractor.execute_command)
                     if collect_host_details:
                         augment_local_host_details(host_info, extractor)
+                    # Log network interfaces count for debugging
+                    net_count = len(host_info.get("network_interfaces", []))
+                    if net_count > 0:
+                        logger.info(f"  ✓ Network interfaces raccolte: {net_count}")
+                    else:
+                        logger.info(f"  ⚠ Nessuna network interface raccolta per {current_hostname}")
                     break
     else:
         logger.info("→ Raccolta informazioni host disabilitata")
