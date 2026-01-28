@@ -57,6 +57,11 @@ if [ -e "$INSTALL_DIR" ]; then
         git reset --hard origin/$BRANCH
     else
         echo "⚠ Found existing path at $INSTALL_DIR (not a git repo)."
+        
+        # Preserve configuration if exists
+        [ -f "$INSTALL_DIR/v2/config.json" ] && cp "$INSTALL_DIR/v2/config.json" "/tmp/prox_config_tmp.json"
+        [ -f "$INSTALL_DIR/v2/.secret.key" ] && cp "$INSTALL_DIR/v2/.secret.key" "/tmp/prox_secret_tmp.key"
+
         BACKUP_DIR="${INSTALL_DIR}_bak_$(date +%s)"
         echo "→ Backing up to $BACKUP_DIR..."
         mv "$INSTALL_DIR" "$BACKUP_DIR"
@@ -66,6 +71,10 @@ if [ -e "$INSTALL_DIR" ]; then
         
         echo "→ Cloning repository to $INSTALL_DIR..."
         git clone -b $BRANCH "$REPO_URL" "$INSTALL_DIR"
+
+        # Restore configuration
+        [ -f "/tmp/prox_config_tmp.json" ] && mv "/tmp/prox_config_tmp.json" "$INSTALL_DIR/v2/config.json"
+        [ -f "/tmp/prox_secret_tmp.key" ] && mv "/tmp/prox_secret_tmp.key" "$INSTALL_DIR/v2/.secret.key"
     fi
 else
     echo "→ Cloning repository to $INSTALL_DIR..."
