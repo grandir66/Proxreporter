@@ -1,8 +1,8 @@
 {
     "proxmox": {
         "enabled": true,
-        "host": "localhost",
-        "username": "",
+        "host": "localhost:8006",
+        "username": "root@pam",
         "password": "",
         "verify_ssl": false
     },
@@ -10,7 +10,7 @@
         "enabled": false,
         "host": "",
         "port": 22,
-        "username": "",
+        "username": "root",
         "password": ""
     },
     "client": {
@@ -24,9 +24,34 @@
         "port": 11122,
         "username": "proxmox",
         "password": "INSERT_PASSWORD_HERE",
-        "base_path": "/home/proxmox/uploads"
+        "base_path": "/home/proxmox/uploads",
+        "fallback_host": "",
+        "fallback_port": 22
     },
     "smtp": {
-        "enabled": false
+        "enabled": false,
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "user": "",
+        "password": "",
+        "sender": "",
+        "recipients": "",
+        "use_tls": true
+    },
+    "system": {
+        "output_directory": "/var/log/proxreporter",
+        "max_file_copies": 5,
+        "log_level": "INFO"
+    },
+    "features": {
+        "collect_cluster": true,
+        "collect_host": true,
+        "collect_host_details": true,
+        "collect_storage": true,
+        "collect_network": true,
+        "collect_vms": true,
+        "collect_backup": true,
+        "collect_containers": false,
+        "collect_perf": false
     }
 }

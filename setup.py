@@ -419,12 +419,29 @@ def setup_interactive(script_path: str) -> Tuple[str, str]:
         },
         "smtp": {
             "enabled": smtp_conf.get("enabled", False),
-            "host": smtp_conf.get("host", ""),
-            "port": smtp_conf.get("port", 0),
+            "host": smtp_conf.get("host", "smtp.gmail.com"),
+            "port": smtp_conf.get("port", 587),
             "user": smtp_conf.get("user", ""),
             "password": secure(smtp_conf.get("password", "")),
             "sender": smtp_conf.get("sender", ""),
-            "recipients": smtp_conf.get("recipients", "")
+            "recipients": smtp_conf.get("recipients", ""),
+            "use_tls": True
+        },
+        "system": {
+            "output_directory": output_dir,
+            "max_file_copies": 5,
+            "log_level": "INFO"
+        },
+        "features": {
+            "collect_cluster": True,
+            "collect_host": True,
+            "collect_host_details": True,
+            "collect_storage": True,
+            "collect_network": True,
+            "collect_vms": True,
+            "collect_backup": True,
+            "collect_containers": False,
+            "collect_perf": False
         }
     }
     
