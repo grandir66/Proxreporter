@@ -2788,6 +2788,8 @@ def write_network_csv(
                 "vlan_id": iface.get("vlan_id") or iface.get("vlan") or iface.get("tag"),
                 "bond_mode": iface.get("bond_mode"),
                 "speed_mbps": iface.get("speed_mbps"),
+                "duplex": iface.get("duplex"),
+                "link_detected": iface.get("link_detected"),
                 "comment": iface.get("comment"),
             }
             rows.append(row)
@@ -2816,6 +2818,8 @@ def write_network_csv(
         "vlan_id",
         "bond_mode",
         "speed_mbps",
+        "duplex",
+        "link_detected",
         "comment",
     ]
     try:
@@ -2843,6 +2847,8 @@ def write_network_csv(
                         "vlan_id": _prepare_csv_value(row.get("vlan_id")),
                         "bond_mode": _prepare_csv_value(row.get("bond_mode")),
                         "speed_mbps": format_speed(row.get("speed_mbps")),
+                        "duplex": _prepare_csv_value(row.get("duplex")),
+                        "link_detected": _prepare_csv_value(row.get("link_detected")),
                         "comment": _prepare_csv_value(row.get("comment")),
                     }
                 )

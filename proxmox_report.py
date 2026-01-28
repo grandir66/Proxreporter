@@ -420,41 +420,129 @@ class ProxmoxLocalExtractor:
 
     def _get_interface_speed(self, iface: str, executor=None) -> Optional[str]:
         """Prova a determinare la velocità dell'interfaccia in Mbps.
-        Usa silent mode per evitare log di errore per interfacce senza link (SFP, WiFi disconnesso)."""
+        Usa silent mode per evitare log di errore per interfacce senza link (SFP, WiFi disconnesso).
+        Salta interfacce virtuali (vmbr*, tap*, veth*) che non hanno velocità fisica."""
+        
+        # Salta interfacce virtuali - non hanno velocità fisica
+        iface_lower = iface.lower()
+        if any(iface_lower.startswith(prefix) for prefix in ('vmbr', 'tap', 'veth', 'lo', 'docker', 'br-')):
+            return None
+        
         # Usa execute_command con silent=True per non loggare errori normali
         def silent_exec(cmd):
             return self.execute_command(cmd, silent=True)
         
-        exec_fn = silent_exec if executor is None else executor
-        
+        # Prima verifica se l'interfaccia ha link attivo
         try:
-            speed_output = silent_exec(f'cat /sys/class/net/{iface}/speed 2>/dev/null')
-            if speed_output:
-                speed_output = speed_output.strip()
-                if speed_output.isdigit() and int(speed_output) > 0:
-                    return speed_output
+            state_output = silent_exec(f"ip link show {iface} 2>/dev/null | grep -oP 'state \\K\\w+'")
+            if state_output and state_output.strip().upper() == 'DOWN':
+                return None  # Interfaccia down, non ha senso cercare velocità
         except Exception:
             pass
+        
+        # Prova con ethtool (più affidabile)
         try:
             ethtool_output = silent_exec(f'ethtool {iface} 2>/dev/null')
             if ethtool_output:
-                match = re.search(r'Speed:\s*([\d\.]+)\s*([A-Za-z]+)', ethtool_output)
-                if match:
-                    value = match.group(1)
-                    unit = match.group(2).lower()
+                # Verifica prima se c'è link
+                link_match = re.search(r'Link detected:\s*(\w+)', ethtool_output, re.IGNORECASE)
+                if link_match and link_match.group(1).lower() == 'no':
+                    return None  # No link, non restituire velocità
+                
+                # Estrai velocità
+                speed_match = re.search(r'Speed:\s*([\d\.]+)\s*([A-Za-z/]+)', ethtool_output, re.IGNORECASE)
+                if speed_match:
+                    value = speed_match.group(1)
+                    unit = speed_match.group(2).lower()
+                    # Verifica che non sia "Unknown!"
+                    if 'unknown' in unit:
+                        return None
                     try:
                         numeric = float(value)
-                        if unit.startswith('g'):
-                            return str(int(numeric * 1000))
+                        if numeric <= 0:
+                            return None
+                        if unit.startswith('g') or '/s' in unit and numeric < 100:
+                            return str(int(numeric * 1000))  # Gb/s -> Mb/s
                         if unit.startswith('m'):
                             return str(int(numeric))
                         if unit.startswith('k'):
                             return str(int(numeric / 1000))
+                        return str(int(numeric))
                     except Exception:
-                        return match.group(0).replace('Speed:', '').strip()
+                        pass
         except Exception:
             pass
+        
+        # Fallback: prova /sys/class/net
+        try:
+            speed_output = silent_exec(f'cat /sys/class/net/{iface}/speed 2>/dev/null')
+            if speed_output:
+                speed_output = speed_output.strip()
+                if speed_output.lstrip('-').isdigit():
+                    speed_val = int(speed_output)
+                    if speed_val > 0:
+                        return str(speed_val)
+        except Exception:
+            pass
+        
         return None
+    
+    def _get_interface_details(self, iface: str) -> Dict[str, Optional[str]]:
+        """Ottiene dettagli completi di un'interfaccia fisica: velocità, duplex, link, stato."""
+        details = {
+            'speed_mbps': None,
+            'duplex': None,
+            'link_detected': None,
+            'state': None
+        }
+        
+        # Salta interfacce virtuali
+        iface_lower = iface.lower()
+        if any(iface_lower.startswith(prefix) for prefix in ('vmbr', 'tap', 'veth', 'lo', 'docker', 'br-')):
+            return details
+        
+        def silent_exec(cmd):
+            return self.execute_command(cmd, silent=True)
+        
+        # Stato interfaccia via ip link
+        try:
+            state_output = silent_exec(f"ip link show {iface} 2>/dev/null | grep -oP 'state \\K\\w+'")
+            if state_output:
+                details['state'] = state_output.strip()
+        except Exception:
+            pass
+        
+        # Dettagli via ethtool
+        try:
+            ethtool_output = silent_exec(f'ethtool {iface} 2>/dev/null')
+            if ethtool_output:
+                # Speed
+                speed_match = re.search(r'Speed:\s*([\d\.]+)\s*([A-Za-z/]+)', ethtool_output, re.IGNORECASE)
+                if speed_match and 'unknown' not in speed_match.group(2).lower():
+                    try:
+                        numeric = float(speed_match.group(1))
+                        unit = speed_match.group(2).lower()
+                        if numeric > 0:
+                            if unit.startswith('g') or ('/s' in unit and numeric < 100):
+                                details['speed_mbps'] = str(int(numeric * 1000))
+                            else:
+                                details['speed_mbps'] = str(int(numeric))
+                    except Exception:
+                        pass
+                
+                # Duplex
+                duplex_match = re.search(r'Duplex:\s*(\w+)', ethtool_output, re.IGNORECASE)
+                if duplex_match:
+                    details['duplex'] = duplex_match.group(1)
+                
+                # Link detected
+                link_match = re.search(r'Link detected:\s*(\w+)', ethtool_output, re.IGNORECASE)
+                if link_match:
+                    details['link_detected'] = link_match.group(1)
+        except Exception:
+            pass
+        
+        return details
 
     def fetch_network_entries_via_pvesh(self, node_name):
         """Recupera network info via pvesh (locale o SSH)"""
@@ -1357,12 +1445,18 @@ class ProxmoxLocalExtractor:
                     except Exception:
                         pass
                 
-                # Speed per interfacce fisiche
+                # Speed, duplex, link per interfacce fisiche
                 if entry['category'] == 'physical':
                     try:
-                        speed = self._get_interface_speed(iface_name, executor)
-                        if speed:
-                            entry['speed_mbps'] = speed
+                        iface_details = self._get_interface_details(iface_name)
+                        if iface_details.get('speed_mbps'):
+                            entry['speed_mbps'] = iface_details['speed_mbps']
+                        if iface_details.get('duplex'):
+                            entry['duplex'] = iface_details['duplex']
+                        if iface_details.get('link_detected'):
+                            entry['link_detected'] = iface_details['link_detected']
+                        if iface_details.get('state'):
+                            entry['state'] = iface_details['state']
                     except Exception:
                         pass
                 
