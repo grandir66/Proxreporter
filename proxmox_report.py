@@ -336,8 +336,8 @@ class ProxmoxLocalExtractor:
             logger.info(f"  ✗ Errore connessione SSH: {e}")
             return False
     
-    def execute_remote_command(self, command):
-        """Esegue comando remoto via SSH"""
+    def execute_remote_command(self, command, silent=False):
+        """Esegue comando remoto via SSH. Se silent=True, non logga errori (per comandi opzionali)."""
         if not self.ssh_client:
             return None
         
@@ -348,20 +348,22 @@ class ProxmoxLocalExtractor:
             if exit_status == 0:
                 return stdout.read().decode('utf-8').strip()
             else:
-                error = stderr.read().decode('utf-8').strip()
-                cmd_preview = command[:60] + '...' if len(command) > 60 else command
-                if error:
-                    logger.info(f"  ⚠ Errore comando '{cmd_preview}': {error}")
-                else:
-                    logger.info(f"  ⚠ Comando '{cmd_preview}' fallito (exit code: {exit_status})")
+                if not silent:
+                    error = stderr.read().decode('utf-8').strip()
+                    cmd_preview = command[:60] + '...' if len(command) > 60 else command
+                    if error:
+                        logger.info(f"  ⚠ Errore comando '{cmd_preview}': {error}")
+                    else:
+                        logger.info(f"  ⚠ Comando '{cmd_preview}' fallito (exit code: {exit_status})")
                 return None
         except Exception as e:
-            cmd_preview = command[:60] + '...' if len(command) > 60 else command
-            logger.info(f"  ⚠ Errore esecuzione comando '{cmd_preview}': {e}")
+            if not silent:
+                cmd_preview = command[:60] + '...' if len(command) > 60 else command
+                logger.info(f"  ⚠ Errore esecuzione comando '{cmd_preview}': {e}")
             return None
     
-    def execute_local_command(self, command):
-        """Esegue comando locale"""
+    def execute_local_command(self, command, silent=False):
+        """Esegue comando locale. Se silent=True, non logga errori (per comandi opzionali)."""
         try:
             result = subprocess.run(
                 command,
@@ -373,27 +375,30 @@ class ProxmoxLocalExtractor:
             if result.returncode == 0:
                 return result.stdout.strip()
             else:
-                cmd_preview = command[:60] + '...' if len(command) > 60 else command
-                if result.stderr:
-                    logger.info(f"  ⚠ Errore comando '{cmd_preview}': {result.stderr.strip()}")
-                else:
-                    logger.info(f"  ⚠ Comando '{cmd_preview}' fallito (exit code: {result.returncode})")
+                if not silent:
+                    cmd_preview = command[:60] + '...' if len(command) > 60 else command
+                    if result.stderr:
+                        logger.info(f"  ⚠ Errore comando '{cmd_preview}': {result.stderr.strip()}")
+                    else:
+                        logger.info(f"  ⚠ Comando '{cmd_preview}' fallito (exit code: {result.returncode})")
                 return None
         except subprocess.TimeoutExpired:
-            cmd_preview = command[:60] + '...' if len(command) > 60 else command
-            logger.info(f"  ⚠ Timeout comando '{cmd_preview}' (30s)")
+            if not silent:
+                cmd_preview = command[:60] + '...' if len(command) > 60 else command
+                logger.info(f"  ⚠ Timeout comando '{cmd_preview}' (30s)")
             return None
         except Exception as e:
-            cmd_preview = command[:60] + '...' if len(command) > 60 else command
-            logger.info(f"  ⚠ Errore esecuzione comando '{cmd_preview}': {e}")
+            if not silent:
+                cmd_preview = command[:60] + '...' if len(command) > 60 else command
+                logger.info(f"  ⚠ Errore esecuzione comando '{cmd_preview}': {e}")
             return None
     
-    def execute_command(self, command):
-        """Esegue comando in base alla modalità"""
+    def execute_command(self, command, silent=False):
+        """Esegue comando in base alla modalità. Se silent=True, non logga errori."""
         if self.execution_mode == 'ssh':
-            return self.execute_remote_command(command)
+            return self.execute_remote_command(command, silent=silent)
         else:
-            return self.execute_local_command(command)
+            return self.execute_local_command(command, silent=silent)
 
     def _guess_interface_category(self, name: str, entry: Optional[Dict[str, Any]] = None) -> str:
         if entry and entry.get('category'):
@@ -413,18 +418,25 @@ class ProxmoxLocalExtractor:
             return 'physical'
         return 'other'
 
-    def _get_interface_speed(self, iface: str, executor) -> Optional[str]:
-        """Prova a determinare la velocità dell'interfaccia in Mbps"""
+    def _get_interface_speed(self, iface: str, executor=None) -> Optional[str]:
+        """Prova a determinare la velocità dell'interfaccia in Mbps.
+        Usa silent mode per evitare log di errore per interfacce senza link (SFP, WiFi disconnesso)."""
+        # Usa execute_command con silent=True per non loggare errori normali
+        def silent_exec(cmd):
+            return self.execute_command(cmd, silent=True)
+        
+        exec_fn = silent_exec if executor is None else executor
+        
         try:
-            speed_output = executor(f'cat /sys/class/net/{iface}/speed 2>/dev/null')
+            speed_output = silent_exec(f'cat /sys/class/net/{iface}/speed 2>/dev/null')
             if speed_output:
                 speed_output = speed_output.strip()
-                if speed_output.isdigit():
+                if speed_output.isdigit() and int(speed_output) > 0:
                     return speed_output
         except Exception:
             pass
         try:
-            ethtool_output = executor(f'ethtool {iface} 2>/dev/null')
+            ethtool_output = silent_exec(f'ethtool {iface} 2>/dev/null')
             if ethtool_output:
                 match = re.search(r'Speed:\s*([\d\.]+)\s*([A-Za-z]+)', ethtool_output)
                 if match:
