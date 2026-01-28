@@ -448,52 +448,180 @@ def setup_v2(script_path: str) -> Tuple[str, str]:
     return command, output_dir
 
 
+def clean_crontab(marker: str = "proxmox_core.py") -> None:
+    """Rimuove dal crontab le linee che contengono il marker."""
+    print("→ Verifica pulizia crontab...")
+    try:
+        # Leggi crontab
+        result = subprocess.run(["crontab", "-l"], capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            # Se exit code != 0, probabilmente non c'è crontab per l'utente, nulla da pulire
+            return
+
+        current_cron = result.stdout
+        if not current_cron:
+            return
+
+        new_lines = []
+        removed = 0
+        for line in current_cron.splitlines():
+            # Rimuovi spazio vuoto e commenti per check lasco, ma il marker è affidabile
+            if marker in line:
+                removed += 1
+                continue
+            new_lines.append(line)
+        
+        if removed > 0:
+            # Ricostruisci crontab (assicura newline finale)
+            new_cron = "\n".join(new_lines) + "\n"
+            subprocess.run(["crontab", "-"], input=new_cron, text=True, check=True)
+            print(f"  ✓ Rimossi {removed} job obsoleti/duplicati dal crontab.")
+        else:
+            print("  ✓ Nessun job precedente trovato.")
+            
+    except Exception as e:
+        print(f"  ⚠ Errore durante la pulizia del crontab: {e}")
+
+
+def update_system(install_dir: Path) -> None:
+    print(f"\n→ Aggiornamento sistema in {install_dir}...")
+    
+    # Cerca root del repo (potrebbe essere la directory stessa o il parent v2)
+    repo_dir = None
+    if (install_dir / ".git").exists():
+        repo_dir = install_dir
+    elif (install_dir.parent / ".git").exists():
+        repo_dir = install_dir.parent
+        
+    if repo_dir:
+        print(f"  Rilevato repository Git in {repo_dir}. Eseguo pull...")
+        try:
+             subprocess.run(["git", "pull"], cwd=repo_dir, check=True)
+             print("  ✓ Codice aggiornato via Git.")
+        except subprocess.CalledProcessError as e:
+             print(f"  ✗ Errore durante git pull: {e}")
+             print("  Provo aggiornamento manuale file principali...")
+             repo_dir = None # Fallback
+    
+    if not repo_dir:
+        # Fallback manual download (es. installazione curl | bash senza git clone full)
+        print("  Aggiornamento file singoli (fallback no-git)...")
+        base_url = "https://raw.githubusercontent.com/grandir66/Proxreporter/main/v2"
+        files = ["proxmox_core.py", "proxmox_report.py", "setup.py", "update_scripts.py", "install.sh"]
+        
+        for f in files:
+            try:
+                dest = install_dir / f
+                # Usa curl con timestamp per evitare cache
+                import time
+                url = f"{base_url}/{f}?t={int(time.time())}"
+                subprocess.run(["curl", "-s", "-o", str(dest), url], check=True)
+                dest.chmod(0o755)
+                print(f"    ✓ Aggiornato {f}")
+            except Exception as e:
+                print(f"    ✗ Errore aggiornamento {f}: {e}")
+
+    # Re-check dependencies
+    print("\n  Verifica dipendenze di sistema...")
+    ensure_dependencies()
+    print("\n✓ Aggiornamento COMPLETO terminato.")
+
+
+def uninstall_system(install_dir: Path) -> None:
+    print(f"\n→ Disinstallazione sistema...")
+    print(f"  Directory rilevata: {install_dir}")
+    
+    if not prompt_yes_no("⚠ Sei sicuro di voler RIMUOVERE Proxreporter e i job cron associati?", default=False):
+        print("Operazione annullata.")
+        return
+
+    # 1. Clean Cron
+    clean_crontab("proxmox_core.py")
+    
+    # 2. Remove Directory
+    if install_dir.exists():
+        if prompt_yes_no(f"Cancellare la directory {install_dir} (inclusi log e config)?", default=False):
+            try:
+                shutil.rmtree(install_dir)
+                print(f"  ✓ Directory {install_dir} rimossa.")
+            except Exception as e:
+                print(f"  ✗ Errore rimozione directory: {e}")
+        else:
+            print(f"  Directory {install_dir} mantenuta.")
+    else:
+        print(f"  Directory {install_dir} non trovata.")
+
+    print("\n✓ Disinstallazione completata.")
+
+
 def main() -> None:
     ensure_dependencies()
 
     print("=" * 70)
-    print("PROXMOX REPORTER - SETUP & CONFIGURAZIONE")
+    print("PROXMOX REPORTER - SETUP & MANAGEMENT UTILITY")
     print("=" * 70)
 
-    # Scelta modalità setup
-    # Scelta modalità setup
-    print("\nModalità setup disponibili:\n")
-    print("  1. SETUP PROXREPORTER V2 (Standard)")
-    print("     → Configura automaticamente host sftp e utente")
-    print("     → Richiede password SFTP")
-    print("     → Genera config.json sicuro")
-    print()
-    
     while True:
-        choice = robust_input("Seleziona modalità [1] (default 1): ").strip()
-        if not choice:
-            choice = "1"
-        if choice in ("1"):
+        print("\nSeleziona operazione:")
+        print("  1) INSTALLAZIONE / RICONFIGURAZIONE")
+        print("     (Installa script, configura parametri e crea job cron)")
+        print("  2) UPDATE SISTEMA")
+        print("     (Aggiorna gli script all'ultima versione e verifica dipendenze)")
+        print("  3) DISINSTALLAZIONE")
+        print("     (Rimuove job cron e file del programma)")
+        print("  q) Esci")
+        
+        choice = robust_input("\nScelta [1]: ").strip()
+        if not choice: choice = "1"
+        
+        if choice == "q":
+            return
+            
+        if choice == "3":
+            # Uninstall
+            default_install_dir = Path("/opt/proxreport")
+            install_dir_input = prompt("Directory installazione da rimuovere", default=str(default_install_dir))
+            uninstall_system(Path(install_dir_input))
+            return # Exit after uninstall
+            
+        if choice == "2":
+            # Update
+            default_install_dir = Path("/opt/proxreport")
+            if (Path.cwd() / "proxmox_core.py").exists():
+                 # Se siamo eseguiti dalla directory di installazione, usa quella come default
+                 default_install_dir = Path.cwd()
+            
+            install_dir_input = prompt("Directory installazione da aggiornare", default=str(default_install_dir))
+            update_system(Path(install_dir_input))
+            return # Exit after update? Or go back to menu? Usually exit.
+            
+        if choice == "1":
+            # Install (Break loop to proceed with normal setup)
             break
-        print("Scelta non valida, usa 1.")
-    
-    use_default = False # Disabilitiamo il default legacy, usiamo setup_v2 come standard
+            
+        print("Scelta non valida.")
 
+    # --- INIZIO LOGICA INSTALLAZIONE (Ex Main) ---
+    
+    print("\n" + "-"*50)
+    print("AVVIO PROCEDURA INSTALLAZIONE")
+    print("-"*50)
+    
     # Deploy scripts
     default_install_dir = Path("/opt/proxreport")
-    if use_default:
-        install_dir = default_install_dir
-        print(f"\n→ Installazione script in: {install_dir}")
-    else:
-        install_dir_input = prompt(
-            "Directory installazione script",
-            default=str(default_install_dir),
-        )
-        install_dir = Path(install_dir_input).expanduser().resolve()
+    install_dir_input = prompt(
+        "Directory installazione script",
+        default=str(default_install_dir),
+    )
+    install_dir = Path(install_dir_input).expanduser().resolve()
     
+    # Copia file
     script_path = str(deploy_scripts(install_dir))
 
-    # Genera comando cron
-    # Usiamo sempre setup_v2 (che sostituisce logicamente il custom/default precedente)
+    # Genera comando cron e config
     command, custom_output_dir = setup_v2(script_path)
     
-    # Crea directory di output e log SUBITO dopo aver definito il path
-    # (necessario per il redirect del cron e per l'esecuzione immediata)
+    # Crea directory di output e log
     output_dir = Path(custom_output_dir) if custom_output_dir else Path("/var/log/proxreporter")
     
     print(f"\n→ Creazione directory output...")
@@ -501,21 +629,18 @@ def main() -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "csv").mkdir(exist_ok=True)
         (output_dir / "backup").mkdir(exist_ok=True)
-        output_dir.chmod(0o755)
-        (output_dir / "csv").chmod(0o755)
-        (output_dir / "backup").chmod(0o755)
+        # Permessi 755
+        for p in [output_dir, output_dir / "csv", output_dir / "backup"]:
+            p.chmod(0o755)
+            
         print(f"  ✓ {output_dir}")
-        print(f"  ✓ {output_dir / 'csv'}")
-        print(f"  ✓ {output_dir / 'backup'}")
     except PermissionError as e:
         print(f"  ✗ Permessi insufficienti: {e}")
         if os.geteuid() != 0:
             print("\n✗ Errore: il setup richiede privilegi root per creare directory in /var/log/")
-            print("  Esegui: sudo python3 setup.py")
             sys.exit(1)
     except Exception as e:
-        print(f"  ⚠ Errore durante creazione directory: {e}")
-        print("  Le directory verranno create automaticamente al primo avvio dello script.")
+        print(f"  ⚠ Errore creazione directory: {e}")
 
     # Mostra e conferma
     print("\n" + "=" * 70)
@@ -525,27 +650,35 @@ def main() -> None:
     print("=" * 70)
 
     if not prompt_yes_no("\nInstallare questo job nel crontab?", default=True):
-        print("\n✋ Setup annullato. Per installare manualmente:")
-        print(f"   crontab -e")
-        print(f"   # Aggiungi la riga mostrata sopra")
+        print("\n✋ Setup annullato (configurazione salvata ma cron non installato).")
         return
 
-    # Installa cron job
+    # Pulizia vecchi job PRIMA di inserire il nuovo
+    clean_crontab("proxmox_core.py")
+
+    # Installazione nuovo job
     try:
+        # Rileggi per sicurezza post-pulizia
         existing = subprocess.run(["crontab", "-l"], capture_output=True, text=True, check=False)
         cron_file = existing.stdout if existing.returncode == 0 else ""
+        
         if cron_file and not cron_file.endswith("\n"):
             cron_file += "\n"
+        
         cron_file += command + "\n"
+        
         subprocess.run(["crontab", "-"], input=cron_file, text=True, check=True)
         print("\n✓ Job cron installato correttamente!")
+        
         print("\n→ Verifica con: crontab -l")
-        print("→ Test manuale: " + script_path + " --local --codcli TEST --nomecliente TEST")
+        print(f"→ Test manuale immediato: {script_path} --local --auto-update --config {install_dir}/config.json")
+        
     except subprocess.CalledProcessError as exc:
         print(f"\n✗ Errore durante l'installazione del crontab: {exc}")
         print("\nPer installare manualmente, esegui:")
         print("  crontab -e")
         print(f"  # Aggiungi: {command}")
+
 
 
 if __name__ == "__main__":
