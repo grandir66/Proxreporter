@@ -11,6 +11,8 @@ import shutil
 import tempfile
 import urllib.request
 import urllib.error
+import time
+import subprocess
 from pathlib import Path
 from typing import Optional, List, Tuple
 
@@ -26,7 +28,9 @@ SCRIPTS_TO_UPDATE = [
     "email_sender.py",
     "setup.py",
     "update_scripts.py",
-    "templates/report.html.j2"
+    "templates/report.html.j2",
+    "install.sh",
+    "README.md"
 ]
 
 def compute_file_hash(filepath: Path) -> Optional[str]:
@@ -67,7 +71,9 @@ def check_and_download_updates(install_dir: Path) -> List[Tuple[str, Path]]:
     
     for script_rel_path in SCRIPTS_TO_UPDATE:
         local_path = install_dir / script_rel_path
-        remote_url = f"{GITHUB_REPO_URL}/{GITHUB_BASE_PATH}/{script_rel_path}"
+        # Cache protection
+        timestamp = int(time.time())
+        remote_url = f"{GITHUB_REPO_URL}/{GITHUB_BASE_PATH}/{script_rel_path}?t={timestamp}"
         
         # Gestione path template nel repo (che sono dentro v2/templates)
         # Lo script assume che SCRIPTS_TO_UPDATE rifletta la struttura locale in v2/ e remota in v2/
@@ -139,16 +145,57 @@ def apply_updates(install_dir: Path, updated_files: List[Tuple[str, Path]]) -> b
     return success_count > 0
 
 
+def update_via_git(install_dir: Path) -> int:
+    """
+    Tenta aggiornamento via git se disponibile.
+    Return codes: 0 (aggiornato), 2 (nessun agg.), 1 (errore/non git)
+    """
+    # Check parent dir for .git (since install_dir is .../v2, usually repo root is parent)
+    repo_dir = install_dir.parent
+    if not (repo_dir / ".git").exists():
+        return 1
+        
+    print(f"→ Rilevato repository Git in {repo_dir}, uso git pull...")
+    try:
+        # Get current hash
+        old_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_dir, text=True).strip()
+        
+        # Pull
+        subprocess.run(["git", "pull"], cwd=repo_dir, check=True)
+        
+        # Get new hash
+        new_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_dir, text=True).strip()
+        
+        if old_hash != new_hash:
+            print(f"  ✓ Aggiornato da {old_hash[:7]} a {new_hash[:7]}")
+            return 0
+        else:
+            print("  ✓ Già aggiornato")
+            return 2
+    except Exception as e:
+        print(f"  ⚠ Errore git pull: {e}, fallback su download diretto")
+        return 1
+
+
 def main():
     # Determina directory di installazione
     # Se eseguito come script, siamo in v2/update_scripts.py, quindi install_dir è v2/
     install_dir = Path(__file__).resolve().parent
     
     # Verifica permessi scrittura
-    if not os.access(install_dir, os.W_OK):
         print(f"⚠ W: Nessun permesso scrittura su {install_dir}. Salto aggiornamento.")
         return # Non uscire con errore, semplicemente salta update nel cron
 
+    # Tentativo 1: Git Pull
+    git_result = update_via_git(install_dir)
+    if git_result == 0:
+        print("✓ Aggiornamento git completato.")
+        sys.exit(0) # Restart
+    elif git_result == 2:
+        # Git rilevato ma nessun aggiornamento
+        sys.exit(2)
+    
+    # Tentativo 2: Download File (Fallback o Non-Git)
     updated_files = check_and_download_updates(install_dir)
     
     if updated_files:
