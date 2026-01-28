@@ -3264,7 +3264,7 @@ class SFTPUploader:
                 self.ssh_client = paramiko.SSHClient()
                 self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 logger.info(f"  → Connessione SFTP a {target_host}:{target_port}...")
-                self.ssh_client.connect(target_host, port=target_port, username=user, password=pwd, timeout=30)
+                self.ssh_client.connect(target_host, port=target_port, username=user, password=pwd, timeout=30, look_for_keys=False, allow_agent=False)
                 logger.info(f"  ✓ Connessione SFTP stabilita con {target_host}")
                 return True
             except Exception as e:
