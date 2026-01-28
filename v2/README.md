@@ -119,6 +119,7 @@ python3 proxmox_core.py --config config.json
 -   `--no-upload`: Generate reports but do *not* upload to SFTP.
 -   `--skip-update`: Skip the auto-update check.
 -   `--local`: Force local execution mode even if config specifies remote.
+-   `--smtp-password <password>`: Override SMTP password to avoid interactive prompts (useful for cron).
 
 ## Troubleshooting
 

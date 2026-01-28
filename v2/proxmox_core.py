@@ -429,18 +429,23 @@ def configure_smtp_notification(
     if not smtp_password:
         smtp_password = DEFAULT_SMTP_PASSWORD
     
-    # Se ancora non presente, chiedi all'utente
+    # Se ancora non presente, chiedi all'utente (SOLO SE INTERATTIVO)
     if not smtp_password:
-        try:
-            import getpass
-            logger.info("  ℹ Password SMTP non disponibile")
-            logger.info("     Inserire la password SMTP (premere Invio per saltare):")
-            smtp_password = getpass.getpass("  Password SMTP: ").strip()
-            if not smtp_password:
-                logger.info("  ℹ Password SMTP non inserita, salto configurazione SMTP")
+        if sys.stdin.isatty():
+            try:
+                import getpass
+                logger.info("  ℹ Password SMTP non disponibile")
+                logger.info("     Inserire la password SMTP (premere Invio per saltare):")
+                smtp_password = getpass.getpass("  Password SMTP: ").strip()
+                if not smtp_password:
+                    logger.info("  ℹ Password SMTP non inserita, salto configurazione SMTP")
+                    return False
+            except (KeyboardInterrupt, EOFError):
+                logger.info("\n  ℹ Configurazione SMTP annullata")
                 return False
-        except (KeyboardInterrupt, EOFError):
-            logger.info("\n  ℹ Configurazione SMTP annullata")
+        else:
+            logger.info("  ℹ Password SMTP non disponibile e sessione non interattiva (cron).")
+            logger.info("     Salto configurazione notifiche SMTP.")
             return False
     
     # Costruisci il from-address con il codice cliente
@@ -1258,6 +1263,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sftp-user", help="Username SFTP (override)")
     parser.add_argument("--sftp-password", help="Password SFTP (override)")
     parser.add_argument("--sftp-base-path", help="Percorso base SFTP (override)")
+    parser.add_argument("--smtp-password", help="Password SMTP for notifications (override)")
     parser.add_argument("--config", help="Percorso file di configurazione JSON (opzionale)")
     parser.add_argument("--auto-update", action="store_true", help="Verifica e applica aggiornamenti prima dell'esecuzione")
     parser.add_argument("--skip-update", action="store_true", help="Salta la verifica aggiornamenti automatica")
@@ -2978,6 +2984,7 @@ def main() -> None:
     sftp_username_override = args.sftp_user
     sftp_password_override = args.sftp_password
     sftp_base_path_override = args.sftp_base_path
+    smtp_password_override = args.smtp_password
 
     if remote_enabled:
         if not api_username or not api_password:
@@ -3076,6 +3083,11 @@ def main() -> None:
              # Merge SMTP
             if "smtp" in file_config:
                 config["smtp"] = file_config["smtp"]
+            
+            if smtp_password_override:
+                if "smtp" not in config:
+                    config["smtp"] = {}
+                config["smtp"]["password"] = smtp_password_override
 
         except Exception as e:
             logger.info(f"⚠ Errore caricamento config file: {e}")
