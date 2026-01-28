@@ -185,7 +185,7 @@ def deploy_scripts(target_dir: Path) -> Path:
         print(f"ℹ Directory sorgente e destinazione coincidono ({target_dir}). Salto la copia.")
         return (target_dir / "proxmox_core.py").resolve()
 
-    files_to_copy = ["proxmox_core.py", "proxmox_report.py", "update_scripts.py", "html_generator.py", "email_sender.py"]
+    files_to_copy = ["proxmox_core.py", "proxmox_report.py", "update_scripts.py", "html_generator.py", "email_sender.py", "debug_auth.py", "install.sh", "README.md"]
     for filename in files_to_copy:
         src = source_dir / filename
         if not src.exists():
