@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script di auto-aggiornamento per Proxmox Reporter V2.
+Script di auto-aggiornamento per Proxmox Reporter.
 Scarica gli script aggiornati da GitHub, confronta versioni e sostituisce se più recenti.
 """
 
@@ -18,7 +18,6 @@ from typing import Optional, List, Tuple
 
 # Configurazione GitHub
 GITHUB_REPO_URL = "https://raw.githubusercontent.com/grandir66/Proxreporter/main"
-GITHUB_BASE_PATH = "v2"  # Directory nel repo
 
 # Script da aggiornare (relativi alla directory di installazione)
 SCRIPTS_TO_UPDATE = [
@@ -73,10 +72,7 @@ def check_and_download_updates(install_dir: Path) -> List[Tuple[str, Path]]:
         local_path = install_dir / script_rel_path
         # Cache protection
         timestamp = int(time.time())
-        remote_url = f"{GITHUB_REPO_URL}/{GITHUB_BASE_PATH}/{script_rel_path}?t={timestamp}"
-        
-        # Gestione path template nel repo (che sono dentro v2/templates)
-        # Lo script assume che SCRIPTS_TO_UPDATE rifletta la struttura locale in v2/ e remota in v2/
+        remote_url = f"{GITHUB_REPO_URL}/{script_rel_path}?t={timestamp}"
         
         # Scarica in file temporaneo
         fd, temp_file_path = tempfile.mkstemp(suffix=f"_{os.path.basename(script_rel_path)}")
@@ -150,10 +146,13 @@ def update_via_git(install_dir: Path) -> int:
     Tenta aggiornamento via git se disponibile.
     Return codes: 0 (aggiornato), 2 (nessun agg.), 1 (errore/non git)
     """
-    # Check parent dir for .git (since install_dir is .../v2, usually repo root is parent)
-    repo_dir = install_dir.parent
+    # Check if install_dir itself is a git repo
+    repo_dir = install_dir
     if not (repo_dir / ".git").exists():
-        return 1
+        # Fallback: check parent dir (legacy structure)
+        repo_dir = install_dir.parent
+        if not (repo_dir / ".git").exists():
+            return 1
         
     print(f"→ Rilevato repository Git in {repo_dir}, uso git pull...")
     try:
@@ -179,7 +178,7 @@ def update_via_git(install_dir: Path) -> int:
 
 def main():
     # Determina directory di installazione
-    # Se eseguito come script, siamo in v2/update_scripts.py, quindi install_dir è v2/
+    # Lo script risiede direttamente in /opt/proxreport/
     install_dir = Path(__file__).resolve().parent
     
     # Verifica permessi scrittura

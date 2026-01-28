@@ -257,9 +257,9 @@ def setup_default(script_path: str) -> str:
     return command
 
 
-def setup_v2(script_path: str) -> Tuple[str, str]:
+def setup_interactive(script_path: str) -> Tuple[str, str]:
     """
-    Setup V2: Richiede password SFTP, usa default per resto, genera config.json.
+    Setup interattivo: Richiede password SFTP, usa default per resto, genera config.json.
     """
     print("\n=== SETUP PROXREPORTER V2 ===\n")
     
@@ -490,12 +490,10 @@ def clean_crontab(marker: str = "proxmox_core.py") -> None:
 def update_system(install_dir: Path) -> None:
     print(f"\n→ Aggiornamento sistema in {install_dir}...")
     
-    # Cerca root del repo (potrebbe essere la directory stessa o il parent v2)
+    # Cerca root del repo
     repo_dir = None
     if (install_dir / ".git").exists():
         repo_dir = install_dir
-    elif (install_dir.parent / ".git").exists():
-        repo_dir = install_dir.parent
         
     if repo_dir:
         print(f"  Rilevato repository Git in {repo_dir}. Eseguo pull...")
@@ -510,7 +508,7 @@ def update_system(install_dir: Path) -> None:
     if not repo_dir:
         # Fallback manual download (es. installazione curl | bash senza git clone full)
         print("  Aggiornamento file singoli (fallback no-git)...")
-        base_url = "https://raw.githubusercontent.com/grandir66/Proxreporter/main/v2"
+        base_url = "https://raw.githubusercontent.com/grandir66/Proxreporter/main"
         files = ["proxmox_core.py", "proxmox_report.py", "setup.py", "update_scripts.py", "install.sh"]
         
         for f in files:
@@ -640,7 +638,7 @@ def main() -> None:
          script_path = str(deploy_scripts(install_dir))
 
     # Genera comando cron e config
-    command, custom_output_dir = setup_v2(script_path)
+    command, custom_output_dir = setup_interactive(script_path)
     
     # Crea directory di output e log
     output_dir = Path(custom_output_dir) if custom_output_dir else Path("/var/log/proxreporter")
