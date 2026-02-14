@@ -229,11 +229,13 @@ def sync_remote_config(config: Dict[str, Any], config_file: Path) -> Dict[str, A
 def merge_remote_defaults(local_config: Dict[str, Any], remote_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Unisce la configurazione remota con quella locale.
-    I valori locali hanno precedenza su quelli remoti.
+    
+    IMPORTANTE: Il server remoto ha SEMPRE precedenza per i campi centralizzati.
+    Questo permette di gestire la configurazione in modo centralizzato.
     
     Args:
         local_config: Configurazione locale
-        remote_config: Configurazione remota (defaults)
+        remote_config: Configurazione remota (master)
     
     Returns:
         Configurazione unita
@@ -243,61 +245,61 @@ def merge_remote_defaults(local_config: Dict[str, Any], remote_config: Dict[str,
     
     merged = local_config.copy()
     
-    # Sezione Syslog
+    # Sezione Syslog - il server remoto ha precedenza
     if "syslog" in remote_config:
         local_syslog = merged.get("syslog", {})
         remote_syslog = remote_config["syslog"]
         
-        # Se syslog non è configurato localmente o è vuoto, usa i defaults remoti
-        if not local_syslog.get("host"):
-            merged["syslog"] = {
-                "enabled": local_syslog.get("enabled", remote_syslog.get("enabled", True)),
-                "host": remote_syslog.get("host", ""),
-                "port": remote_syslog.get("port", 514),
-                "protocol": remote_syslog.get("protocol", "tcp"),
-                "facility": remote_syslog.get("facility", 16),
-                "app_name": local_syslog.get("app_name", remote_syslog.get("app_name", "proxreporter"))
-            }
-            logger.debug(f"Syslog configurato da defaults remoti: {merged['syslog']['host']}:{merged['syslog']['port']}")
+        # Aggiorna tutti i campi dal server remoto (configurazione centralizzata)
+        merged["syslog"] = {
+            "enabled": remote_syslog.get("enabled", local_syslog.get("enabled", True)),
+            "host": remote_syslog.get("host", local_syslog.get("host", "")),
+            "port": remote_syslog.get("port", local_syslog.get("port", 514)),
+            "protocol": remote_syslog.get("protocol", local_syslog.get("protocol", "tcp")),
+            "facility": remote_syslog.get("facility", local_syslog.get("facility", 16)),
+            "app_name": remote_syslog.get("app_name", local_syslog.get("app_name", "proxreporter")),
+            "format": remote_syslog.get("format", local_syslog.get("format", "gelf"))
+        }
+        logger.info(f"Syslog sincronizzato: {merged['syslog']['host']}:{merged['syslog']['port']} ({merged['syslog']['format']})")
     
-    # Sezione SMTP - applica defaults remoti per campi mancanti
+    # Sezione SMTP - il server remoto ha precedenza per i campi centralizzati
     if "smtp" in remote_config:
         local_smtp = merged.get("smtp", {})
         remote_smtp = remote_config["smtp"]
         
-        logger.debug(f"SMTP locale prima del merge: {local_smtp}")
-        logger.debug(f"SMTP remoto: {remote_smtp}")
+        # Campi gestiti centralmente (il server remoto ha precedenza)
+        central_fields = ["host", "port", "user", "password", "sender", "recipients", "use_tls", "use_ssl"]
         
-        # Campi da copiare dai defaults remoti se non presenti localmente
-        smtp_fields = ["host", "port", "user", "password", "sender", "recipients", "use_tls", "use_ssl"]
-        
-        for key in smtp_fields:
-            # Copia se il campo non esiste o è vuoto localmente
-            local_value = local_smtp.get(key)
+        for key in central_fields:
             remote_value = remote_smtp.get(key)
-            
-            if not local_value and remote_value:
+            if remote_value is not None:  # Usa il valore remoto se presente
                 local_smtp[key] = remote_value
-                logger.debug(f"SMTP: copiato {key} = {remote_value}")
         
-        # Se host è configurato (da remoto o locale), abilita SMTP automaticamente
+        # Abilita SMTP se configurato
         if local_smtp.get("host") and local_smtp.get("recipients"):
             local_smtp["enabled"] = True
-            logger.info(f"SMTP abilitato automaticamente: {local_smtp.get('host')} -> {local_smtp.get('recipients')}")
         
         merged["smtp"] = local_smtp
-        logger.debug(f"SMTP finale dopo merge: {merged['smtp']}")
+        logger.info(f"SMTP sincronizzato: {local_smtp.get('host')} -> {local_smtp.get('recipients')}")
     
-    # Sezione Alerts (defaults)
+    # Sezione Alerts - il server remoto ha precedenza
     if "alerts" in remote_config:
         local_alerts = merged.get("alerts", {})
         remote_alerts = remote_config["alerts"]
         
-        # Merge intelligente: mantieni valori locali, aggiungi defaults remoti
+        # Il server remoto ha precedenza per tutti i campi
         for key, value in remote_alerts.items():
-            if key not in local_alerts:
-                local_alerts[key] = value
+            local_alerts[key] = value
+        
         merged["alerts"] = local_alerts
+        logger.debug("Alerts sincronizzati da configurazione remota")
+    
+    # Sezione Hardware Monitoring - il server remoto ha precedenza
+    if "hardware_monitoring" in remote_config:
+        merged["hardware_monitoring"] = remote_config["hardware_monitoring"]
+    
+    if "hardware_thresholds" in remote_config:
+        merged["hardware_thresholds"] = remote_config["hardware_thresholds"]
     
     return merged
 
