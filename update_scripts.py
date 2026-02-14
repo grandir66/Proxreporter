@@ -2,9 +2,14 @@
 """
 Script di auto-aggiornamento per Proxmox Reporter.
 Scarica gli script aggiornati da GitHub, confronta versioni e sostituisce se più recenti.
+
+Sviluppatore: Riccardo Grandi
+Proprietario: Domarc SRL
+Copyright (c) 2024-2026 Domarc SRL - Tutti i diritti riservati.
 """
 
 import hashlib
+import json
 import os
 import sys
 import shutil
@@ -14,7 +19,7 @@ import urllib.error
 import time
 import subprocess
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 
 # Configurazione GitHub
 GITHUB_REPO_URL = "https://raw.githubusercontent.com/grandir66/Proxreporter/main"
@@ -27,8 +32,11 @@ SCRIPTS_TO_UPDATE = [
     "email_sender.py",
     "setup.py",
     "update_scripts.py",
+    "alert_manager.py",
+    "remote_config.py",
     "templates/report.html.j2",
     "install.sh",
+    "config.json.example",
     "README.md"
 ]
 
@@ -141,6 +149,127 @@ def apply_updates(install_dir: Path, updated_files: List[Tuple[str, Path]]) -> b
     return success_count > 0
 
 
+def auto_enable_syslog(install_dir: Path) -> bool:
+    """
+    Abilita automaticamente Syslog nella configurazione esistente.
+    Viene eseguito dopo ogni aggiornamento per garantire che i sistemi
+    già installati ricevano la configurazione Syslog centralizzata.
+    
+    Returns:
+        True se la configurazione è stata modificata, False altrimenti
+    """
+    config_file = install_dir / "config.json"
+    
+    if not config_file.exists():
+        return False
+    
+    try:
+        with open(config_file, 'r') as f:
+            config = json.load(f)
+        
+        modified = False
+        
+        # Verifica se syslog è già configurato e abilitato
+        syslog_config = config.get("syslog", {})
+        
+        if not syslog_config or not syslog_config.get("enabled"):
+            # Abilita syslog con configurazione minima
+            # I valori reali verranno scaricati dal server SFTP
+            config["syslog"] = {
+                "enabled": True,
+                "host": "",  # Sarà popolato dal file remoto
+                "port": 8514,
+                "protocol": "tcp",
+                "facility": 16,
+                "app_name": "proxreporter"
+            }
+            modified = True
+            print("  → Syslog abilitato (configurazione da server remoto)")
+        
+        # Verifica se alerts è configurato
+        if "alerts" not in config:
+            config["alerts"] = {
+                "enabled": True,
+                "email_min_severity": "warning",
+                "syslog_min_severity": "info",
+                "storage_warning_threshold": 85,
+                "backup_failure": {"email": False, "syslog": True},
+                "upload_failure": {"email": False, "syslog": True},
+                "storage_warning": {"email": False, "syslog": True},
+                "backup_success": {"email": False, "syslog": True},
+                "upload_success": {"email": False, "syslog": True},
+                "report_generated": {"email": False, "syslog": True}
+            }
+            modified = True
+            print("  → Alert system configurato")
+        elif not config["alerts"].get("enabled"):
+            config["alerts"]["enabled"] = True
+            modified = True
+        
+        # Salva se modificato
+        if modified:
+            # Backup prima di modificare
+            backup_file = config_file.with_suffix('.json.bak')
+            shutil.copy2(config_file, backup_file)
+            
+            with open(config_file, 'w') as f:
+                json.dump(config, f, indent=4)
+            
+            # Mantieni permessi restrittivi
+            os.chmod(config_file, 0o600)
+            
+            print("  ✓ Configurazione aggiornata automaticamente")
+            return True
+        
+        return False
+        
+    except json.JSONDecodeError as e:
+        print(f"  ⚠ Errore parsing config.json: {e}")
+        return False
+    except Exception as e:
+        print(f"  ⚠ Errore auto-configurazione syslog: {e}")
+        return False
+
+
+def download_remote_defaults(install_dir: Path, config: Dict[str, Any]) -> bool:
+    """
+    Scarica i defaults remoti dal server SFTP e li applica alla configurazione.
+    Questo viene eseguito dopo l'aggiornamento per garantire che i nuovi
+    parametri centralizzati siano disponibili.
+    """
+    try:
+        # Import dinamico per evitare errori se il modulo non esiste ancora
+        sys.path.insert(0, str(install_dir))
+        from remote_config import download_remote_config, merge_remote_defaults
+        
+        print("  → Scaricamento configurazione centralizzata...")
+        
+        remote_config = download_remote_config(config, install_dir)
+        if remote_config:
+            # Merge e salva
+            merged_config = merge_remote_defaults(config, remote_config)
+            
+            config_file = install_dir / "config.json"
+            with open(config_file, 'w') as f:
+                json.dump(merged_config, f, indent=4)
+            os.chmod(config_file, 0o600)
+            
+            syslog_host = merged_config.get("syslog", {}).get("host", "")
+            if syslog_host:
+                print(f"  ✓ Syslog configurato: {syslog_host}:{merged_config.get('syslog', {}).get('port', 514)}")
+            return True
+        else:
+            print("  ℹ Configurazione remota non disponibile (verrà scaricata alla prossima esecuzione)")
+            return False
+            
+    except ImportError:
+        # Il modulo remote_config non esiste ancora
+        return False
+    except Exception as e:
+        print(f"  ⚠ Errore download config remota: {e}")
+        return False
+
+
 def update_via_git(install_dir: Path) -> int:
     """
     Tenta aggiornamento via git se disponibile.
@@ -176,6 +305,43 @@ def update_via_git(install_dir: Path) -> int:
         return 1
 
 
+def post_update_tasks(install_dir: Path, was_updated: bool) -> None:
+    """
+    Esegue task post-aggiornamento:
+    - Auto-abilita Syslog nei sistemi esistenti
+    - Scarica configurazione remota
+    - Applica eventuali migrazioni di configurazione
+    """
+    print("\n→ Configurazione automatica post-aggiornamento...")
+    
+    config_file = install_dir / "config.json"
+    config = {}
+    
+    if config_file.exists():
+        try:
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+        except Exception:
+            pass
+    
+    # 1. Auto-abilita Syslog se non configurato
+    syslog_modified = auto_enable_syslog(install_dir)
+    
+    # Ricarica config se modificato
+    if syslog_modified and config_file.exists():
+        try:
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+        except Exception:
+            pass
+    
+    # 2. Scarica e applica configurazione remota
+    if config:
+        download_remote_defaults(install_dir, config)
+    
+    print("✓ Configurazione automatica completata")
+
+
 def main():
     # Determina directory di installazione
     # Lo script risiede direttamente in /opt/proxreport/
@@ -190,9 +356,13 @@ def main():
     git_result = update_via_git(install_dir)
     if git_result == 0:
         print("✓ Aggiornamento git completato.")
+        # Esegui task post-aggiornamento
+        post_update_tasks(install_dir, was_updated=True)
         sys.exit(0) # Restart
     elif git_result == 2:
         # Git rilevato ma nessun aggiornamento
+        # Esegui comunque la configurazione automatica (per sistemi esistenti)
+        post_update_tasks(install_dir, was_updated=False)
         sys.exit(2)
     
     # Tentativo 2: Download File (Fallback o Non-Git)
@@ -201,13 +371,18 @@ def main():
     if updated_files:
         if apply_updates(install_dir, updated_files):
             print("✓ Aggiornamento completato con successo.")
+            # Esegui task post-aggiornamento
+            post_update_tasks(install_dir, was_updated=True)
             sys.exit(0) # Restart required
         else:
             print("⚠ Aggiornamento parziale o fallito.")
             sys.exit(1) # Error
     else:
-        # Silenzioso se non ci sono aggiornamenti
+        # Anche senza aggiornamenti, esegui la configurazione automatica
+        # Questo garantisce che i sistemi esistenti ricevano Syslog
+        post_update_tasks(install_dir, was_updated=False)
         sys.exit(2) # No updates, no restart needed
+
 
 if __name__ == "__main__":
     main()
