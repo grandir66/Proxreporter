@@ -181,21 +181,28 @@ def merge_remote_defaults(local_config: Dict[str, Any], remote_config: Dict[str,
         local_smtp = merged.get("smtp", {})
         remote_smtp = remote_config["smtp"]
         
+        logger.debug(f"SMTP locale prima del merge: {local_smtp}")
+        logger.debug(f"SMTP remoto: {remote_smtp}")
+        
         # Campi da copiare dai defaults remoti se non presenti localmente
         smtp_fields = ["host", "port", "user", "password", "sender", "recipients", "use_tls", "use_ssl"]
         
         for key in smtp_fields:
             # Copia se il campo non esiste o è vuoto localmente
-            if key not in local_smtp or not local_smtp.get(key):
-                if key in remote_smtp and remote_smtp.get(key):
-                    local_smtp[key] = remote_smtp[key]
+            local_value = local_smtp.get(key)
+            remote_value = remote_smtp.get(key)
+            
+            if not local_value and remote_value:
+                local_smtp[key] = remote_value
+                logger.debug(f"SMTP: copiato {key} = {remote_value}")
         
         # Se host è configurato (da remoto o locale), abilita SMTP automaticamente
         if local_smtp.get("host") and local_smtp.get("recipients"):
             local_smtp["enabled"] = True
-            logger.debug(f"SMTP abilitato automaticamente: {local_smtp.get('host')}")
+            logger.info(f"SMTP abilitato automaticamente: {local_smtp.get('host')} -> {local_smtp.get('recipients')}")
         
         merged["smtp"] = local_smtp
+        logger.debug(f"SMTP finale dopo merge: {merged['smtp']}")
     
     # Sezione Alerts (defaults)
     if "alerts" in remote_config:

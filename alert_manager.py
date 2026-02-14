@@ -14,7 +14,7 @@ Copyright (c) 2024-2026 Domarc SRL - Tutti i diritti riservati.
 import logging
 import socket
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from enum import Enum
 
@@ -117,7 +117,7 @@ class SyslogSender:
             return self._build_gelf_message(severity, message, structured_data)
         
         pri = self.facility * 8 + severity.value
-        timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
         
         # Structured data (opzionale) - formato ottimizzato per Graylog
         sd = '-'

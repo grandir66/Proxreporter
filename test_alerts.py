@@ -19,7 +19,7 @@ import argparse
 import json
 import socket
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Aggiungi directory corrente al path
@@ -69,7 +69,13 @@ def load_config(config_path: str) -> dict:
         remote_config = download_remote_config(config, config_file.parent)
         if remote_config:
             config = merge_remote_defaults(config, remote_config)
-            print("✓ Configurazione remota caricata")
+            print("✓ Configurazione remota caricata e applicata")
+            
+            # Mostra stato SMTP dopo merge
+            smtp_enabled = config.get('smtp', {}).get('enabled', False)
+            smtp_host = config.get('smtp', {}).get('host', '')
+            smtp_recipients = config.get('smtp', {}).get('recipients', '')
+            print(f"  SMTP: enabled={smtp_enabled}, host={smtp_host}, recipients={smtp_recipients}")
     except ImportError:
         pass
     except Exception as e:
@@ -158,7 +164,7 @@ def test_syslog_raw(config: dict) -> bool:
         
         # Messaggio Syslog RFC 5424
         hostname = socket.gethostname()
-        timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
         pri = 16 * 8 + 6  # LOCAL0.INFO
         message = f"<{pri}>1 {timestamp} {hostname} proxreporter-test - - - Test connessione Syslog raw"
         
