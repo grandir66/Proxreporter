@@ -242,8 +242,24 @@ from proxmox_report import (  # type: ignore
     rotate_files,
     ProxmoxBackupIntegrated,
     SFTPUploader,
-
 )
+
+# Alert Manager (opzionale)
+try:
+    from alert_manager import AlertManager, AlertSeverity, AlertType
+    ALERT_MANAGER_AVAILABLE = True
+except ImportError:
+    ALERT_MANAGER_AVAILABLE = False
+    AlertManager = None
+
+# Remote Config (opzionale)
+try:
+    from remote_config import download_remote_config, merge_remote_defaults
+    REMOTE_CONFIG_AVAILABLE = True
+except ImportError:
+    REMOTE_CONFIG_AVAILABLE = False
+    download_remote_config = None
+    merge_remote_defaults = None
 
 
 # ---------------------------------------------------------------------------
@@ -852,13 +868,15 @@ def configure_backup_jobs_notification(
         return False
 
 
-def attempt_sftp_upload(uploader: SFTPUploader, files: List[str]) -> bool:
+def attempt_sftp_upload(uploader: SFTPUploader, files: List[str], 
+                        alert_manager=None, codcli: str = "", nomecliente: str = "") -> bool:
     """
     Tenta l'upload dei file usando l'uploader.
     La logica di retry e failover è ora gestita internamente da SFTPUploader.connect().
     """
     sftp_conf = uploader.config.get("sftp", {})
     base_path = sftp_conf.get("base_path", "/tmp")
+    destination = f"{sftp_conf.get('host', 'unknown')}:{base_path}"
 
     logger.info("→ Avvio procedura upload SFTP...")
     
@@ -867,19 +885,70 @@ def attempt_sftp_upload(uploader: SFTPUploader, files: List[str]) -> bool:
             uploader.upload_files(files, base_path)
             uploader.close()
             logger.info("✓ Upload SFTP completato con successo")
+            # Alert upload success
+            if alert_manager:
+                try:
+                    alert_manager.alert_upload_success(len(files), destination, codcli, nomecliente)
+                except Exception:
+                    pass
             return True
         else:
             # Messaggio di errore già loggato da connect()
             logger.error("✗ Impossibile completare l'upload SFTP.")
+            # Alert upload failure
+            if alert_manager:
+                try:
+                    alert_manager.alert_upload_failure("Connection failed", destination, codcli, nomecliente)
+                except Exception:
+                    pass
             return False
             
     except Exception as exc:
         logger.error(f"⚠ Errore critico durante upload SFTP: {exc}")
+        # Alert upload failure
+        if alert_manager:
+            try:
+                alert_manager.alert_upload_failure(str(exc), destination, codcli, nomecliente)
+            except Exception:
+                pass
         try:
              uploader.close()
         except Exception:
              pass
         return False
+
+
+def check_storage_alerts(hosts_info: List[Dict[str, Any]], alert_manager, config: Dict[str, Any]):
+    """
+    Controlla lo stato degli storage e invia alert se superano la soglia configurata.
+    """
+    if not alert_manager:
+        return
+    
+    alerts_config = config.get("alerts", {})
+    threshold = alerts_config.get("storage_warning_threshold", 85)
+    
+    for host in hosts_info:
+        hostname = host.get("hostname", "unknown")
+        storages = host.get("storage", [])
+        
+        for storage in storages:
+            storage_name = storage.get("name", "unknown")
+            used_percent = storage.get("used_percent")
+            
+            # Calcola percentuale se non presente
+            if used_percent is None:
+                used_gb = storage.get("used_gb")
+                total_gb = storage.get("total_gb")
+                if used_gb and total_gb and total_gb > 0:
+                    used_percent = (used_gb / total_gb) * 100
+            
+            if used_percent is not None and used_percent >= threshold:
+                try:
+                    alert_manager.alert_storage_warning(storage_name, used_percent, threshold, hostname)
+                    logger.info(f"  ⚠ Alert storage: {storage_name} su {hostname} al {used_percent:.1f}%")
+                except Exception as e:
+                    logger.debug(f"Errore invio alert storage: {e}")
 
 
 
@@ -969,6 +1038,24 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
     extractor = ProxmoxLocalExtractor(config, features_config)
     execution_mode = extractor.detect_execution_mode()
     logger.info("")
+
+    # Inizializza Alert Manager (se disponibile e configurato)
+    alert_manager = None
+    if ALERT_MANAGER_AVAILABLE and config.get("alerts", {}).get("enabled", False):
+        try:
+            alert_manager = AlertManager(config)
+            syslog_enabled = config.get("syslog", {}).get("enabled", False)
+            smtp_enabled = config.get("smtp", {}).get("enabled", False)
+            if syslog_enabled or smtp_enabled:
+                channels = []
+                if smtp_enabled:
+                    channels.append("SMTP")
+                if syslog_enabled:
+                    channels.append(f"Syslog ({config.get('syslog', {}).get('host', 'N/A')})")
+                logger.info(f"✓ Alert Manager inizializzato: {', '.join(channels)}")
+        except Exception as e:
+            logger.warning(f"⚠ Impossibile inizializzare Alert Manager: {e}")
+            alert_manager = None
 
     if execution_mode == "ssh":
         if not extractor.connect_ssh():
@@ -1126,6 +1213,11 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
             logger.info(f"✓ CSV storage salvato: {storage_csv_file}")
         if collect_network and network_csv_file and network_csv_file and Path(network_csv_file).exists():
             logger.info(f"✓ CSV network salvato: {network_csv_file}")
+        
+        # Controlla alert storage (se Alert Manager attivo)
+        if alert_manager and collect_storage:
+            check_storage_alerts(all_hosts_info, alert_manager, config)
+        
         logger.info("")
     else:
         logger.info("→ Raccolta CSV host/storage/network disabilitata")
@@ -1137,8 +1229,24 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
         backup_manager = ProxmoxBackupIntegrated(config)
         backup_manager.execution_mode = execution_mode
         backup_manager.ssh_client = extractor.ssh_client
-        if backup_manager.create_backup(str(backup_dir), codcli, nomecliente, int(system_conf.get("max_file_copies", 5)), server_identifier):
-            backup_file = backup_manager.backup_file
+        try:
+            if backup_manager.create_backup(str(backup_dir), codcli, nomecliente, int(system_conf.get("max_file_copies", 5)), server_identifier):
+                backup_file = backup_manager.backup_file
+                # Alert backup success
+                if alert_manager and backup_file:
+                    try:
+                        size_mb = Path(backup_file).stat().st_size / (1024 * 1024)
+                        alert_manager.alert_backup_success(backup_file, size_mb, codcli, nomecliente)
+                    except Exception:
+                        pass
+            else:
+                # Alert backup failure
+                if alert_manager:
+                    alert_manager.alert_backup_failure("Backup creation failed", codcli, nomecliente)
+        except Exception as backup_error:
+            logger.error(f"✗ Errore durante backup: {backup_error}")
+            if alert_manager:
+                alert_manager.alert_backup_failure(str(backup_error), codcli, nomecliente)
         logger.info("")
     else:
         if not collect_backup:
@@ -1167,7 +1275,7 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
         if collect_backup and backup_file and Path(backup_file).exists():
             files.append(backup_file)
         if files:
-            attempt_sftp_upload(uploader, files)
+            attempt_sftp_upload(uploader, files, alert_manager, codcli, nomecliente)
         logger.info("")
     else:
         logger.info("→ Upload SFTP disabilitato")
@@ -1199,6 +1307,15 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
     
     if html_generated:
         logger.info(f"  📄 HTML Report: {html_file}")
+        
+        # Alert report generated
+        if alert_manager:
+            try:
+                vm_count = len(vms)
+                host_count = len(all_hosts_info)
+                alert_manager.alert_report_generated(str(html_file), codcli, nomecliente, vm_count, host_count)
+            except Exception:
+                pass
         
         # Email Sending
         smtp_config = config.get("smtp", {})
@@ -1244,6 +1361,13 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
     if collect_backup and backup_file and Path(backup_file).exists():
         logger.info(f"  📦 Backup: {backup_file}")
     logger.info("")
+    
+    # Chiudi Alert Manager
+    if alert_manager:
+        try:
+            alert_manager.close()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -2913,6 +3037,17 @@ def main() -> None:
             # Applica decifratura a tutto il file_config in-place
             _decrypt_recursive(file_config)
             logger.info("✓ Decifratura configurazione completata")
+            
+            # Scarica e merge configurazione remota (se disponibile)
+            if REMOTE_CONFIG_AVAILABLE and download_remote_config and merge_remote_defaults:
+                try:
+                    install_dir = config_file.parent
+                    remote_config = download_remote_config(file_config, install_dir)
+                    if remote_config:
+                        file_config = merge_remote_defaults(file_config, remote_config)
+                        logger.info("✓ Configurazione remota integrata")
+                except Exception as e:
+                    logger.debug(f"⚠ Configurazione remota non disponibile: {e}")
 
         except Exception as e:
             logger.warning(f"⚠ Errore caricamento/decifratura config: {e}")

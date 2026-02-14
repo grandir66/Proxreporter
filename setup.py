@@ -343,7 +343,64 @@ def setup_interactive(script_path: str) -> Tuple[str, str]:
             "use_ssl": False
         }
 
+    # Syslog Config
+    # I defaults vengono scaricati dal server SFTP (non hardcodati qui)
+    syslog_conf = {"enabled": False}
+    if prompt_yes_no("\nAbilitare invio alert a server Syslog centralizzato?", default=True):
+        print("  ℹ I parametri del server Syslog verranno scaricati automaticamente")
+        print("    dal server SFTP alla prima esecuzione.")
+        
+        # Opzione per configurazione manuale
+        if prompt_yes_no("  Configurare manualmente il server Syslog?", default=False):
+            syslog_host = prompt("  Syslog Server (hostname/IP)")
+            syslog_port = prompt("  Syslog Port", default="8514")
+            syslog_protocol = prompt("  Protocollo (udp/tcp)", default="tcp")
+            
+            syslog_conf = {
+                "enabled": True,
+                "host": syslog_host,
+                "port": int(syslog_port),
+                "protocol": syslog_protocol.lower(),
+                "facility": 16,  # LOCAL0
+                "app_name": "proxreporter"
+            }
+            print(f"  ✓ Syslog configurato: {syslog_host}:{syslog_port} ({syslog_protocol})")
+        else:
+            # Usa i defaults remoti (verranno scaricati all'esecuzione)
+            syslog_conf = {
+                "enabled": True,
+                "host": "",  # Verrà popolato dai defaults remoti
+                "port": 8514,
+                "protocol": "tcp",
+                "facility": 16,
+                "app_name": "proxreporter"
+            }
+            print("  ✓ Syslog abilitato (configurazione da server remoto)")
 
+    # Alerts Config
+    alerts_conf = {
+        "enabled": True,
+        "email_min_severity": "warning",
+        "syslog_min_severity": "info",
+        "storage_warning_threshold": 85
+    }
+    
+    if smtp_conf.get("enabled") or syslog_conf.get("enabled"):
+        print("\n--- Configurazione Alert ---")
+        if prompt_yes_no("Ricevere alert per errori backup/upload?", default=True):
+            alerts_conf["backup_failure"] = {"email": smtp_conf.get("enabled", False), "syslog": syslog_conf.get("enabled", False)}
+            alerts_conf["upload_failure"] = {"email": smtp_conf.get("enabled", False), "syslog": syslog_conf.get("enabled", False)}
+        
+        if prompt_yes_no("Ricevere alert per operazioni riuscite?", default=False):
+            alerts_conf["backup_success"] = {"email": False, "syslog": syslog_conf.get("enabled", False)}
+            alerts_conf["upload_success"] = {"email": False, "syslog": syslog_conf.get("enabled", False)}
+            alerts_conf["report_generated"] = {"email": False, "syslog": syslog_conf.get("enabled", False)}
+        
+        storage_threshold = prompt("Soglia alert storage pieno (%)", default="85")
+        try:
+            alerts_conf["storage_warning_threshold"] = int(storage_threshold)
+        except ValueError:
+            alerts_conf["storage_warning_threshold"] = 85
 
     # Generate config.json (prepara dizionario)
     # Nota: installazione avverrà nella directory dove risiede lo script
@@ -446,6 +503,15 @@ def setup_interactive(script_path: str) -> Tuple[str, str]:
             "max_file_copies": 5,
             "log_level": "INFO"
         },
+        "syslog": {
+            "enabled": syslog_conf.get("enabled", False),
+            "host": syslog_conf.get("host", ""),
+            "port": syslog_conf.get("port", 514),
+            "protocol": syslog_conf.get("protocol", "udp"),
+            "facility": syslog_conf.get("facility", 16),
+            "app_name": "proxreporter"
+        },
+        "alerts": alerts_conf,
         "features": {
             "collect_cluster": True,
             "collect_host": True,

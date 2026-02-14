@@ -3,3 +3,9 @@ __pycache__/
 .DS_Store
 v2/config.json
 venvs/
+
+# Configurazioni sensibili
+config.json
+.secret.key
+.remote_defaults.json
+server_config/

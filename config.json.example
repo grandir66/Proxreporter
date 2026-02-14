@@ -44,6 +44,44 @@
         "max_file_copies": 5,
         "log_level": "INFO"
     },
+    "syslog": {
+        "enabled": false,
+        "host": "",
+        "port": 514,
+        "protocol": "udp",
+        "facility": 16,
+        "app_name": "proxreporter"
+    },
+    "alerts": {
+        "enabled": true,
+        "email_min_severity": "warning",
+        "syslog_min_severity": "info",
+        "storage_warning_threshold": 85,
+        "backup_success": {
+            "email": false,
+            "syslog": true
+        },
+        "backup_failure": {
+            "email": true,
+            "syslog": true
+        },
+        "upload_success": {
+            "email": false,
+            "syslog": true
+        },
+        "upload_failure": {
+            "email": true,
+            "syslog": true
+        },
+        "storage_warning": {
+            "email": true,
+            "syslog": true
+        },
+        "report_generated": {
+            "email": false,
+            "syslog": true
+        }
+    },
     "features": {
         "collect_cluster": true,
         "collect_host": true,
