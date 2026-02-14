@@ -187,6 +187,13 @@ def auto_enable_syslog(install_dir: Path) -> bool:
             modified = True
             print("  → Syslog abilitato (configurazione da server remoto)")
         
+        # Verifica se SMTP deve essere abilitato
+        smtp_config = config.get("smtp", {})
+        if smtp_config.get("host") and smtp_config.get("recipients") and not smtp_config.get("enabled"):
+            config["smtp"]["enabled"] = True
+            modified = True
+            print("  → SMTP abilitato automaticamente")
+        
         # Verifica se alerts è configurato
         if "alerts" not in config:
             config["alerts"] = {
