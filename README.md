@@ -16,6 +16,9 @@ The system is designed to run directly on the Proxmox host (or remotely via SSH/
 -   **Automated Delivery**: Compresses reports and configuration backups into an archive and uploads it via secure SFTP.
 -   **HTML Reporting**: Generates modern, responsive HTML reports summarizing the cluster status, VM usage, and storage.
 -   **Email Alerts**: Sends the HTML report directly via email (SMTP) to configured recipients.
+-   **Syslog/Graylog Integration**: Sends alerts in GELF format to centralized logging systems (Graylog, Syslog).
+-   **Hardware Monitoring**: Monitors disk health (SMART), RAID status, memory ECC errors, CPU temperatures, and kernel errors.
+-   **Centralized Configuration**: Downloads configuration from SFTP server, enabling centralized management of all installations.
 -   **Notification System**: Integrates with Proxmox's notification system to alert on backup status or errors.
 -   **Auto-Update**: Capable of self-updating from the repository to ensure the latest features and fixes are applied.
 -   **Low Footprint**: Written in Python 3 with minimal external dependencies.
@@ -170,6 +173,108 @@ The V3 modular version provides:
 - Comprehensive unit tests
 
 See [src/README.md](src/README.md) for detailed V3 documentation.
+
+---
+
+## Alert System
+
+Proxreporter includes a comprehensive alert system that sends notifications via **Email (SMTP)** and **Syslog/Graylog (GELF format)**.
+
+### Alert Types
+
+| Alert Type | Description | Email | Syslog |
+|------------|-------------|-------|--------|
+| `backup_success` | Backup completed successfully | No | Yes |
+| `backup_failure` | Backup failed | Yes | Yes |
+| `upload_success` | SFTP upload completed | No | Yes |
+| `upload_failure` | SFTP upload failed | Yes | Yes |
+| `storage_warning` | Storage usage above threshold | Yes | Yes |
+| `report_generated` | HTML report generated | No | Yes |
+| `hardware_warning` | Hardware issue detected (warning) | Yes | Yes |
+| `hardware_critical` | Hardware issue detected (critical) | Yes | Yes |
+
+### Hardware Monitoring
+
+The system monitors:
+- **Disks (SMART)**: Health status, reallocated sectors, pending sectors, temperature
+- **Memory (ECC)**: Corrected and uncorrected errors via EDAC
+- **RAID**: mdadm array status, ZFS pool status
+- **Temperature**: CPU and component temperatures
+- **Kernel**: MCE errors, I/O errors, hardware failures from dmesg
+
+### Testing Alerts
+
+```bash
+python3 /opt/proxreport/test_alerts.py --config /opt/proxreport/config.json
+```
+
+---
+
+## Centralized Configuration
+
+Proxreporter supports **centralized configuration management** via SFTP. This allows administrators to manage settings for all installations from a single location.
+
+### How It Works
+
+1. A master configuration file is stored on the SFTP server at:
+   ```
+   /home/proxmox/config/proxreporter_defaults.json
+   ```
+
+2. At each execution, clients:
+   - Download the remote configuration
+   - Merge it with the local `config.json`
+   - **Save the updated configuration locally**
+
+3. The remote configuration has **priority** for centralized fields:
+   - `syslog.*` (host, port, format, etc.)
+   - `smtp.*` (host, recipients, credentials)
+   - `alerts.*` (thresholds, enabled channels)
+   - `hardware_monitoring.*` and `hardware_thresholds.*`
+
+4. Local-only fields are preserved:
+   - `client.codcli`, `client.nomecliente` (unique identifiers)
+   - `sftp.password` (local credentials)
+
+### Updating All Installations
+
+To change configuration for all clients:
+
+1. Edit the file on the SFTP server:
+   ```bash
+   scp proxreporter_defaults.json proxmox@sftp-server:/home/proxmox/config/
+   ```
+
+2. At the next execution of each client, the changes are automatically applied.
+
+### Example Remote Configuration
+
+```json
+{
+    "syslog": {
+        "enabled": true,
+        "host": "syslog.example.com",
+        "port": 8514,
+        "protocol": "tcp",
+        "format": "gelf"
+    },
+    "smtp": {
+        "host": "smtp.example.com",
+        "port": 25,
+        "user": "smtp-user",
+        "password": "smtp-password",
+        "sender": "{codcli}_{nomecliente}@example.com",
+        "recipients": "alerts@example.com"
+    },
+    "alerts": {
+        "enabled": true,
+        "storage_warning_threshold": 85
+    },
+    "hardware_monitoring": {
+        "enabled": true
+    }
+}
+```
 
 ---
 
