@@ -21,7 +21,28 @@ logger = logging.getLogger("proxreporter")
 class EmailSender:
     def __init__(self, config):
         self.smtp_config = config.get('smtp', {})
+        self.client_config = config.get('client', {})
         self.enabled = self.smtp_config.get('enabled', False)
+    
+    def _resolve_sender(self, sender_template: str) -> str:
+        """
+        Risolve il template del sender con codcli e nomecliente.
+        
+        Es: "{codcli}_{nomecliente}@domarc.it" -> "12345_Acme@domarc.it"
+        """
+        if not sender_template:
+            return sender_template
+        
+        codcli = self.client_config.get('codcli', 'unknown')
+        nomecliente = self.client_config.get('nomecliente', 'unknown')
+        
+        # Sanitizza nomecliente per uso in email (rimuovi spazi e caratteri speciali)
+        nomecliente_safe = ''.join(c if c.isalnum() or c in '-_' else '' for c in nomecliente)
+        
+        resolved = sender_template.replace('{codcli}', str(codcli))
+        resolved = resolved.replace('{nomecliente}', nomecliente_safe)
+        
+        return resolved
         
     def send_report(self, html_content, subject, attachments=None):
         """
@@ -40,7 +61,8 @@ class EmailSender:
         port = int(self.smtp_config.get('port', 25))
         user = self.smtp_config.get('user')
         password = self.smtp_config.get('password')
-        sender = self.smtp_config.get('sender', user)
+        sender_template = self.smtp_config.get('sender', user)
+        sender = self._resolve_sender(sender_template)
         recipients = self.smtp_config.get('recipients', [])
         use_tls = self.smtp_config.get('use_tls', False)
         use_ssl = self.smtp_config.get('use_ssl', False)

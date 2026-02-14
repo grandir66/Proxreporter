@@ -34,8 +34,8 @@
         "port": 25,
         "user": "smtp.domarc",
         "password": "",
-        "sender": "proxreporter@domarc.it",
-        "recipients": "",
+        "sender": "{codcli}_{nomecliente}@domarc.it",
+        "recipients": "proxreporter@domarc.it",
         "use_tls": false,
         "use_ssl": false
     },
