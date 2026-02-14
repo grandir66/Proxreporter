@@ -48,17 +48,21 @@ def _get_sftp_password(config: Dict[str, Any]) -> Optional[str]:
     return password if password and not password.startswith("ENC:") else None
 
 
-def download_remote_config(config: Dict[str, Any], install_dir: Path) -> Optional[Dict[str, Any]]:
+def download_remote_config(config: Dict[str, Any], install_dir) -> Optional[Dict[str, Any]]:
     """
     Scarica il file di configurazione remota dal server SFTP.
     
     Args:
         config: Configurazione locale (per ottenere credenziali SFTP)
-        install_dir: Directory di installazione per il cache locale
+        install_dir: Directory di installazione per il cache locale (Path o str)
     
     Returns:
         Dict con la configurazione remota o None se non disponibile
     """
+    # Assicura che install_dir sia un Path
+    if isinstance(install_dir, str):
+        install_dir = Path(install_dir)
+    
     cache_file = install_dir / LOCAL_CACHE_FILENAME
     
     # Prova prima a usare il cache locale se esiste ed è recente (< 24h)
