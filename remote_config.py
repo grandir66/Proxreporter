@@ -146,6 +146,86 @@ def _load_cache(cache_file: Path) -> Optional[Dict[str, Any]]:
     return None
 
 
+def save_merged_config(config: Dict[str, Any], config_file: Path) -> bool:
+    """
+    Salva la configurazione aggiornata nel file config.json locale.
+    
+    Args:
+        config: Configurazione da salvare
+        config_file: Percorso del file config.json
+    
+    Returns:
+        True se salvato con successo
+    """
+    try:
+        # Backup prima di sovrascrivere
+        backup_file = config_file.with_suffix('.json.bak')
+        if config_file.exists():
+            import shutil
+            shutil.copy2(config_file, backup_file)
+        
+        with open(config_file, 'w') as f:
+            json.dump(config, f, indent=4)
+        
+        # Mantieni permessi restrittivi
+        os.chmod(config_file, 0o600)
+        
+        logger.info(f"✓ Configurazione locale aggiornata: {config_file}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"✗ Errore salvataggio config: {e}")
+        return False
+
+
+def sync_remote_config(config: Dict[str, Any], config_file: Path) -> Dict[str, Any]:
+    """
+    Scarica la configurazione remota, fa il merge con quella locale,
+    e salva le modifiche nel config.json locale.
+    
+    Questo permette di gestire la configurazione in modo centralizzato:
+    le modifiche sul server SFTP vengono applicate a tutti i client.
+    
+    Args:
+        config: Configurazione locale corrente
+        config_file: Percorso del file config.json
+    
+    Returns:
+        Configurazione aggiornata (merged)
+    """
+    if isinstance(config_file, str):
+        config_file = Path(config_file)
+    
+    install_dir = config_file.parent
+    
+    # Scarica configurazione remota
+    remote_config = download_remote_config(config, install_dir)
+    
+    if not remote_config:
+        logger.debug("Nessuna configurazione remota disponibile")
+        return config
+    
+    # Merge
+    merged_config = merge_remote_defaults(config, remote_config)
+    
+    # Verifica se ci sono differenze da salvare
+    config_changed = False
+    
+    # Controlla sezioni chiave per modifiche
+    for section in ['syslog', 'smtp', 'alerts', 'hardware_monitoring', 'hardware_thresholds']:
+        if merged_config.get(section) != config.get(section):
+            config_changed = True
+            logger.debug(f"Sezione '{section}' aggiornata dalla config remota")
+    
+    # Salva se ci sono modifiche
+    if config_changed:
+        save_merged_config(merged_config, config_file)
+    else:
+        logger.debug("Nessuna modifica dalla configurazione remota")
+    
+    return merged_config
+
+
 def merge_remote_defaults(local_config: Dict[str, Any], remote_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Unisce la configurazione remota con quella locale.

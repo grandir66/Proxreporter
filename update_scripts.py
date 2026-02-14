@@ -242,39 +242,35 @@ def auto_enable_syslog(install_dir: Path) -> bool:
 def download_remote_defaults(install_dir: Path, config: Dict[str, Any]) -> bool:
     """
     Scarica i defaults remoti dal server SFTP e li applica alla configurazione.
-    Questo viene eseguito dopo l'aggiornamento per garantire che i nuovi
-    parametri centralizzati siano disponibili.
+    Salva le modifiche nel config.json locale per gestione centralizzata.
     """
     try:
         # Import dinamico per evitare errori se il modulo non esiste ancora
         sys.path.insert(0, str(install_dir))
-        from remote_config import download_remote_config, merge_remote_defaults
+        from remote_config import sync_remote_config
         
-        print("  → Scaricamento configurazione centralizzata...")
+        print("  → Sincronizzazione configurazione centralizzata...")
         
-        remote_config = download_remote_config(config, install_dir)
-        if remote_config:
-            # Merge e salva
-            merged_config = merge_remote_defaults(config, remote_config)
-            
-            config_file = install_dir / "config.json"
-            with open(config_file, 'w') as f:
-                json.dump(merged_config, f, indent=4)
-            os.chmod(config_file, 0o600)
-            
-            syslog_host = merged_config.get("syslog", {}).get("host", "")
-            if syslog_host:
-                print(f"  ✓ Syslog configurato: {syslog_host}:{merged_config.get('syslog', {}).get('port', 514)}")
-            return True
-        else:
-            print("  ℹ Configurazione remota non disponibile (verrà scaricata alla prossima esecuzione)")
-            return False
+        config_file = install_dir / "config.json"
+        merged_config = sync_remote_config(config, config_file)
+        
+        # Mostra info sulla configurazione
+        syslog_host = merged_config.get("syslog", {}).get("host", "")
+        smtp_enabled = merged_config.get("smtp", {}).get("enabled", False)
+        
+        if syslog_host:
+            print(f"  ✓ Syslog: {syslog_host}:{merged_config.get('syslog', {}).get('port', 514)}")
+        if smtp_enabled:
+            print(f"  ✓ SMTP: {merged_config.get('smtp', {}).get('host', 'N/A')}")
+        
+        return True
             
     except ImportError:
         # Il modulo remote_config non esiste ancora
+        print("  ℹ Modulo remote_config non disponibile")
         return False
     except Exception as e:
-        print(f"  ⚠ Errore download config remota: {e}")
+        print(f"  ⚠ Errore sincronizzazione config remota: {e}")
         return False
 
 

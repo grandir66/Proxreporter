@@ -254,12 +254,13 @@ except ImportError:
 
 # Remote Config (opzionale)
 try:
-    from remote_config import download_remote_config, merge_remote_defaults
+    from remote_config import download_remote_config, merge_remote_defaults, sync_remote_config
     REMOTE_CONFIG_AVAILABLE = True
 except ImportError:
     REMOTE_CONFIG_AVAILABLE = False
     download_remote_config = None
     merge_remote_defaults = None
+    sync_remote_config = None
 
 # Hardware Monitor (opzionale)
 try:
@@ -3111,16 +3112,14 @@ def main() -> None:
             _decrypt_recursive(file_config)
             logger.info("✓ Decifratura configurazione completata")
             
-            # Scarica e merge configurazione remota (se disponibile)
-            if REMOTE_CONFIG_AVAILABLE and download_remote_config and merge_remote_defaults:
+            # Scarica, merge e salva configurazione remota (se disponibile)
+            # Questo permette di gestire la configurazione in modo centralizzato
+            if REMOTE_CONFIG_AVAILABLE and sync_remote_config:
                 try:
-                    install_dir = config_file.parent
-                    remote_config = download_remote_config(file_config, install_dir)
-                    if remote_config:
-                        file_config = merge_remote_defaults(file_config, remote_config)
-                        logger.info("✓ Configurazione remota integrata")
+                    file_config = sync_remote_config(file_config, config_file)
+                    logger.info("✓ Configurazione sincronizzata con server remoto")
                 except Exception as e:
-                    logger.debug(f"⚠ Configurazione remota non disponibile: {e}")
+                    logger.debug(f"⚠ Sincronizzazione configurazione remota non disponibile: {e}")
 
         except Exception as e:
             logger.warning(f"⚠ Errore caricamento/decifratura config: {e}")
