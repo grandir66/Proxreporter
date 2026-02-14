@@ -188,6 +188,24 @@ def test_syslog_raw(config: dict) -> bool:
         return False
 
 
+def resolve_sender_template(sender_template: str, config: dict) -> str:
+    """Risolve il template del sender con codcli e nomecliente"""
+    if not sender_template:
+        return sender_template
+    
+    client_config = config.get('client', {})
+    codcli = client_config.get('codcli', 'unknown')
+    nomecliente = client_config.get('nomecliente', 'unknown')
+    
+    # Sanitizza nomecliente per uso in email
+    nomecliente_safe = ''.join(c if c.isalnum() or c in '-_' else '' for c in nomecliente)
+    
+    resolved = sender_template.replace('{codcli}', str(codcli))
+    resolved = resolved.replace('{nomecliente}', nomecliente_safe)
+    
+    return resolved
+
+
 def test_smtp(config: dict) -> bool:
     """Testa l'invio di una email SMTP"""
     smtp_config = config.get('smtp', {})
@@ -201,7 +219,8 @@ def test_smtp(config: dict) -> bool:
     port = int(smtp_config.get('port', 25))
     user = smtp_config.get('user', '')
     password = smtp_config.get('password', '')
-    sender = smtp_config.get('sender', '')
+    sender_template = smtp_config.get('sender', '')
+    sender = resolve_sender_template(sender_template, config)
     recipients = smtp_config.get('recipients', '')
     
     if not host:
