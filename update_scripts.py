@@ -34,6 +34,7 @@ SCRIPTS_TO_UPDATE = [
     "update_scripts.py",
     "alert_manager.py",
     "remote_config.py",
+    "hardware_monitor.py",
     "templates/report.html.j2",
     "install.sh",
     "config.json.example",

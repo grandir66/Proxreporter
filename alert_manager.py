@@ -43,6 +43,13 @@ class AlertType(Enum):
     VM_STATUS_CHANGE = "vm_status_change"
     HOST_WARNING = "host_warning"
     STORAGE_WARNING = "storage_warning"
+    HARDWARE_WARNING = "hardware_warning"
+    HARDWARE_CRITICAL = "hardware_critical"
+    DISK_ERROR = "disk_error"
+    RAID_DEGRADED = "raid_degraded"
+    MEMORY_ERROR = "memory_error"
+    TEMPERATURE_WARNING = "temperature_warning"
+    KERNEL_ERROR = "kernel_error"
     CUSTOM = "custom"
 
 
@@ -517,6 +524,95 @@ class AlertManager:
                 'host_count': host_count,
             }
         )
+    
+    # =========================================================================
+    # HARDWARE ALERTS
+    # =========================================================================
+    
+    def alert_hardware_issue(self, component: str, device: str, status: str,
+                              message: str, details: Dict[str, Any] = None,
+                              hostname: str = "") -> Dict[str, bool]:
+        """
+        Alert generico per problemi hardware.
+        
+        Args:
+            component: disk, memory, raid, temperature, kernel
+            device: nome dispositivo (es. /dev/sda, cpu0, md0)
+            status: critical o warning
+            message: descrizione del problema
+            details: dettagli aggiuntivi
+            hostname: nome host
+        """
+        if not hostname:
+            hostname = socket.gethostname()
+        
+        # Determina tipo alert e severità
+        if status == "critical":
+            alert_type = AlertType.HARDWARE_CRITICAL
+            severity = AlertSeverity.CRITICAL
+        else:
+            alert_type = AlertType.HARDWARE_WARNING
+            severity = AlertSeverity.WARNING
+        
+        # Mappa componente a tipo specifico se disponibile
+        component_alert_map = {
+            "disk": AlertType.DISK_ERROR,
+            "raid": AlertType.RAID_DEGRADED,
+            "memory": AlertType.MEMORY_ERROR,
+            "temperature": AlertType.TEMPERATURE_WARNING,
+            "kernel": AlertType.KERNEL_ERROR,
+        }
+        if component in component_alert_map:
+            alert_type = component_alert_map[component]
+        
+        alert_details = {
+            'component': component,
+            'device': device,
+            'hostname': hostname,
+        }
+        if details:
+            alert_details.update(details)
+        
+        return self.send_alert(
+            alert_type,
+            severity,
+            f"Hardware {component.upper()}: {device}",
+            message,
+            alert_details
+        )
+    
+    def send_hardware_alerts(self, hardware_alerts: list, hostname: str = "") -> Dict[str, int]:
+        """
+        Invia tutti gli alert hardware rilevati.
+        
+        Args:
+            hardware_alerts: Lista di HardwareAlert dal HardwareMonitor
+            hostname: nome host
+        
+        Returns:
+            Dict con conteggio alert inviati per canale
+        """
+        results = {'syslog': 0, 'email': 0, 'total': 0}
+        
+        for alert in hardware_alerts:
+            status = "critical" if alert.status.value == "critical" else "warning"
+            
+            result = self.alert_hardware_issue(
+                component=alert.component,
+                device=alert.device,
+                status=status,
+                message=alert.message,
+                details=alert.details,
+                hostname=hostname
+            )
+            
+            if result.get('syslog'):
+                results['syslog'] += 1
+            if result.get('email'):
+                results['email'] += 1
+            results['total'] += 1
+        
+        return results
     
     def close(self):
         """Chiude tutte le connessioni"""

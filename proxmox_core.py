@@ -29,7 +29,7 @@ import shutil
 import importlib
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple, Set
+from typing import Dict, Any, List, Optional, Tuple, Set, Callable
 import logging
 import time
 import fcntl
@@ -260,6 +260,14 @@ except ImportError:
     REMOTE_CONFIG_AVAILABLE = False
     download_remote_config = None
     merge_remote_defaults = None
+
+# Hardware Monitor (opzionale)
+try:
+    from hardware_monitor import HardwareMonitor, HardwareStatus
+    HARDWARE_MONITOR_AVAILABLE = True
+except ImportError:
+    HARDWARE_MONITOR_AVAILABLE = False
+    HardwareMonitor = None
 
 
 # ---------------------------------------------------------------------------
@@ -918,6 +926,59 @@ def attempt_sftp_upload(uploader: SFTPUploader, files: List[str],
         return False
 
 
+def check_hardware_alerts(alert_manager, config: Dict[str, Any], executor: Callable = None) -> Dict[str, Any]:
+    """
+    Esegue il controllo hardware e invia alert per problemi rilevati.
+    
+    Args:
+        alert_manager: istanza AlertManager
+        config: configurazione
+        executor: funzione per eseguire comandi (locale o SSH)
+    
+    Returns:
+        Dict con summary dei controlli hardware
+    """
+    if not HARDWARE_MONITOR_AVAILABLE or not HardwareMonitor:
+        logger.debug("Hardware Monitor non disponibile")
+        return {}
+    
+    if not config.get("alerts", {}).get("enabled", True):
+        return {}
+    
+    # Verifica se il controllo hardware è abilitato
+    hardware_config = config.get("hardware_monitoring", {})
+    if not hardware_config.get("enabled", True):
+        return {}
+    
+    try:
+        logger.info("")
+        logger.info("=" * 70)
+        logger.info("CONTROLLO HARDWARE")
+        logger.info("=" * 70)
+        
+        # Crea monitor con executor appropriato
+        monitor = HardwareMonitor(config, executor)
+        
+        # Esegui tutti i controlli
+        alerts = monitor.run_all_checks()
+        
+        # Invia alert se ce ne sono
+        if alerts and alert_manager:
+            hostname = socket.gethostname()
+            results = alert_manager.send_hardware_alerts(alerts, hostname)
+            
+            if results['total'] > 0:
+                logger.info(f"  → Inviati {results['total']} alert hardware "
+                           f"(Syslog: {results['syslog']}, Email: {results['email']})")
+        
+        # Ritorna summary
+        return monitor.get_summary()
+        
+    except Exception as e:
+        logger.warning(f"⚠ Errore durante controllo hardware: {e}")
+        return {}
+
+
 def check_storage_alerts(hosts_info: List[Dict[str, Any]], alert_manager, config: Dict[str, Any]):
     """
     Controlla lo stato degli storage e invia alert se superano la soglia configurata.
@@ -1253,6 +1314,18 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
             logger.info("→ Backup disabilitato dalle feature")
         else:
             logger.info("→ Backup non disponibile in modalità API")
+        logger.info("")
+
+    # -----------------------------------------------------------------------
+    # CONTROLLO HARDWARE
+    # -----------------------------------------------------------------------
+    hardware_summary = {}
+    if execution_mode in ("local", "ssh") and alert_manager:
+        hardware_summary = check_hardware_alerts(
+            alert_manager, 
+            config, 
+            extractor.execute_command if execution_mode in ("local", "ssh") else None
+        )
         logger.info("")
 
     if extractor.ssh_client:

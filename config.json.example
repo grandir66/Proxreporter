@@ -80,7 +80,32 @@
         "report_generated": {
             "email": false,
             "syslog": true
+        },
+        "hardware_warning": {
+            "email": true,
+            "syslog": true
+        },
+        "hardware_critical": {
+            "email": true,
+            "syslog": true
         }
+    },
+    "hardware_monitoring": {
+        "enabled": true,
+        "check_disks": true,
+        "check_memory": true,
+        "check_raid": true,
+        "check_temperature": true,
+        "check_kernel": true
+    },
+    "hardware_thresholds": {
+        "disk_temp_warning": 45,
+        "disk_temp_critical": 55,
+        "cpu_temp_warning": 75,
+        "cpu_temp_critical": 90,
+        "reallocated_sectors_warning": 1,
+        "reallocated_sectors_critical": 10,
+        "storage_warning_threshold": 85
     },
     "features": {
         "collect_cluster": true,
