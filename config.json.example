@@ -50,7 +50,8 @@
         "port": 514,
         "protocol": "udp",
         "facility": 16,
-        "app_name": "proxreporter"
+        "app_name": "proxreporter",
+        "format": "gelf"
     },
     "alerts": {
         "enabled": true,
