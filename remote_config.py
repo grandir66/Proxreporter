@@ -24,8 +24,13 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger("proxreporter")
 
 # Configurazione per il download del file di configurazione remota
+# Server primario (esterno)
 REMOTE_CONFIG_SFTP_HOST = "sftp.domarc.it"
 REMOTE_CONFIG_SFTP_PORT = 11122
+# Server fallback (interno)
+REMOTE_CONFIG_SFTP_FALLBACK_HOST = "192.168.20.14"
+REMOTE_CONFIG_SFTP_FALLBACK_PORT = 22
+# Credenziali comuni
 REMOTE_CONFIG_SFTP_USER = "proxmox"
 REMOTE_CONFIG_PATH = "/home/proxmox/config/proxreporter_defaults.json"
 LOCAL_CACHE_FILENAME = ".remote_defaults.json"
@@ -96,43 +101,54 @@ def download_remote_config(config: Dict[str, Any], install_dir) -> Optional[Dict
             logger.debug("Password SFTP non disponibile, uso cache locale")
             return _load_cache(cache_file)
     
-    try:
-        logger.debug(f"Download configurazione remota da {REMOTE_CONFIG_SFTP_HOST}...")
-        
-        transport = paramiko.Transport((REMOTE_CONFIG_SFTP_HOST, REMOTE_CONFIG_SFTP_PORT))
-        transport.connect(username=REMOTE_CONFIG_SFTP_USER, password=password)
-        sftp = paramiko.SFTPClient.from_transport(transport)
-        
-        # Scarica in un file temporaneo
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as tmp:
-            tmp_path = tmp.name
-        
+    # Lista server da provare: primario e fallback
+    servers = [
+        (REMOTE_CONFIG_SFTP_HOST, REMOTE_CONFIG_SFTP_PORT, "Primary"),
+        (REMOTE_CONFIG_SFTP_FALLBACK_HOST, REMOTE_CONFIG_SFTP_FALLBACK_PORT, "Fallback"),
+    ]
+    
+    for host, port, server_type in servers:
         try:
-            sftp.get(REMOTE_CONFIG_PATH, tmp_path)
+            logger.debug(f"Download configurazione remota da {host}:{port} ({server_type})...")
             
-            with open(tmp_path, 'r') as f:
-                remote_config = json.load(f)
+            transport = paramiko.Transport((host, port))
+            transport.connect(username=REMOTE_CONFIG_SFTP_USER, password=password)
+            sftp = paramiko.SFTPClient.from_transport(transport)
             
-            # Salva nel cache locale
-            with open(cache_file, 'w') as f:
-                json.dump(remote_config, f, indent=2)
-            os.chmod(cache_file, 0o600)
+            # Scarica in un file temporaneo
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as tmp:
+                tmp_path = tmp.name
             
-            logger.info(f"✓ Configurazione remota scaricata e salvata in cache")
-            
-            return remote_config
-            
-        finally:
-            os.unlink(tmp_path)
-            sftp.close()
-            transport.close()
-            
-    except FileNotFoundError:
-        logger.debug(f"File configurazione remota non trovato: {REMOTE_CONFIG_PATH}")
-        return _load_cache(cache_file)
-    except Exception as e:
-        logger.debug(f"Impossibile scaricare config remota: {e}")
-        return _load_cache(cache_file)
+            try:
+                sftp.get(REMOTE_CONFIG_PATH, tmp_path)
+                
+                with open(tmp_path, 'r') as f:
+                    remote_config = json.load(f)
+                
+                # Salva nel cache locale
+                with open(cache_file, 'w') as f:
+                    json.dump(remote_config, f, indent=2)
+                os.chmod(cache_file, 0o600)
+                
+                logger.info(f"✓ Configurazione remota scaricata da {host} ({server_type})")
+                
+                return remote_config
+                
+            finally:
+                os.unlink(tmp_path)
+                sftp.close()
+                transport.close()
+                
+        except FileNotFoundError:
+            logger.debug(f"File configurazione remota non trovato su {host}: {REMOTE_CONFIG_PATH}")
+            continue
+        except Exception as e:
+            logger.debug(f"Impossibile scaricare config da {host}:{port}: {e}")
+            continue
+    
+    # Se tutti i server falliscono, usa il cache locale
+    logger.debug("Tutti i server SFTP non raggiungibili, uso cache locale")
+    return _load_cache(cache_file)
 
 
 def _load_cache(cache_file: Path) -> Optional[Dict[str, Any]]:
