@@ -35,6 +35,7 @@ SCRIPTS_TO_UPDATE = [
     "alert_manager.py",
     "remote_config.py",
     "hardware_monitor.py",
+    "pve_monitor.py",
     "version.py",
     "test_alerts.py",
     "templates/report.html.j2",

@@ -55,6 +55,12 @@ try:
 except ImportError:
     CRYPTOGRAPHY_AVAILABLE = False
 
+try:
+    from pve_monitor import PVEMonitor
+    PVE_MONITOR_AVAILABLE = True
+except ImportError:
+    PVE_MONITOR_AVAILABLE = False
+
 
 # Logging Configuration
 LOG_FILE_PATH = Path("/var/log/proxreporter/app.log")
@@ -1426,6 +1432,33 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
              logger.info("→ Invio email disabilitato (smtp.enabled=false o assente)")
     else:
         logger.warning("⚠ impossibile generare report HTML")
+
+    # =========================================================================
+    # PVE MONITOR - Invio stato a Syslog/Graylog
+    # =========================================================================
+    pve_monitor_config = config.get("pve_monitor", {})
+    if pve_monitor_config.get("enabled", False) and PVE_MONITOR_AVAILABLE:
+        logger.info("")
+        logger.info("=" * 70)
+        logger.info("PVE MONITOR")
+        logger.info("=" * 70)
+        try:
+            # Passa codcli e nomecliente al config per il monitor
+            monitor_config = config.copy()
+            monitor_config["codcli"] = codcli
+            monitor_config["nomecliente"] = nomecliente
+            
+            pve_monitor = PVEMonitor(monitor_config)
+            pve_results = pve_monitor.run()
+            
+            if pve_results.get("enabled"):
+                checks = pve_results.get("checks", {})
+                logger.info(f"  PVE Version: {pve_results.get('pve_version', 'unknown')}")
+                logger.info(f"  Controlli eseguiti: {len(checks)}")
+        except Exception as e:
+            logger.error(f"Errore PVE Monitor: {e}")
+    elif pve_monitor_config.get("enabled", False) and not PVE_MONITOR_AVAILABLE:
+        logger.warning("⚠ PVE Monitor abilitato ma modulo non disponibile")
 
     logger.info("=" * 70)
     logger.info("✓ REPORT COMPLETATO")

@@ -212,7 +212,7 @@ def sync_remote_config(config: Dict[str, Any], config_file: Path) -> Dict[str, A
     config_changed = False
     
     # Controlla sezioni chiave per modifiche
-    for section in ['syslog', 'smtp', 'alerts', 'hardware_monitoring', 'hardware_thresholds']:
+    for section in ['syslog', 'smtp', 'alerts', 'hardware_monitoring', 'hardware_thresholds', 'pve_monitor']:
         if merged_config.get(section) != config.get(section):
             config_changed = True
             logger.debug(f"Sezione '{section}' aggiornata dalla config remota")
@@ -300,6 +300,18 @@ def merge_remote_defaults(local_config: Dict[str, Any], remote_config: Dict[str,
     
     if "hardware_thresholds" in remote_config:
         merged["hardware_thresholds"] = remote_config["hardware_thresholds"]
+    
+    # Sezione PVE Monitor - il server remoto ha precedenza
+    if "pve_monitor" in remote_config:
+        local_pve = merged.get("pve_monitor", {})
+        remote_pve = remote_config["pve_monitor"]
+        
+        # Il server remoto ha precedenza per tutti i campi
+        for key, value in remote_pve.items():
+            local_pve[key] = value
+        
+        merged["pve_monitor"] = local_pve
+        logger.debug("PVE Monitor sincronizzato da configurazione remota")
     
     return merged
 
