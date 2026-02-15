@@ -623,6 +623,50 @@ class AlertManager:
         
         return results
     
+    def send_heartbeat(self, hostname: str = "", extra_info: Dict[str, Any] = None) -> bool:
+        """
+        Invia un messaggio di heartbeat/presenza al syslog.
+        Dovrebbe essere chiamato periodicamente (es. ogni ora) per indicare che il sistema è attivo.
+        
+        Args:
+            hostname: Nome host (se vuoto usa quello del sistema)
+            extra_info: Informazioni aggiuntive da includere
+        
+        Returns:
+            True se inviato con successo
+        """
+        import socket
+        import platform
+        
+        if not hostname:
+            hostname = socket.gethostname()
+        
+        # Raccogli info di base sul sistema
+        heartbeat_data = {
+            'hostname': hostname,
+            'codcli': self.config.get('codcli', ''),
+            'nomecliente': self.config.get('nomecliente', ''),
+            'version': __version__,
+            'python_version': platform.python_version(),
+            'platform': platform.system(),
+            'uptime_check': datetime.now(timezone.utc).isoformat(),
+        }
+        
+        if extra_info:
+            heartbeat_data.update(extra_info)
+        
+        # Invia solo via syslog (heartbeat non va via email)
+        result = self.syslog_sender.send(
+            AlertSeverity.INFO,
+            f"HEARTBEAT: {hostname} online - Proxreporter v{__version__}",
+            heartbeat_data
+        )
+        
+        if result:
+            logger.info(f"  ✓ Heartbeat inviato per {hostname}")
+        
+        return result
+    
     def close(self):
         """Chiude tutte le connessioni"""
         self.syslog_sender.close()

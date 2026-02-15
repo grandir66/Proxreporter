@@ -1121,6 +1121,16 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
                 if syslog_enabled:
                     channels.append(f"Syslog ({config.get('syslog', {}).get('host', 'N/A')})")
                 logger.info(f"✓ Alert Manager inizializzato: {', '.join(channels)}")
+                
+                # Invia heartbeat all'avvio per segnalare presenza del sistema
+                if syslog_enabled:
+                    try:
+                        alert_manager.send_heartbeat(
+                            hostname=server_identifier,
+                            extra_info={'event': 'execution_start'}
+                        )
+                    except Exception as he:
+                        logger.debug(f"Heartbeat non inviato: {he}")
         except Exception as e:
             logger.warning(f"⚠ Impossibile inizializzare Alert Manager: {e}")
             alert_manager = None
