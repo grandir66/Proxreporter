@@ -347,7 +347,68 @@ def post_update_tasks(install_dir: Path, was_updated: bool) -> None:
     if config:
         download_remote_defaults(install_dir, config)
     
+    # 3. Configura cron heartbeat se non presente
+    setup_heartbeat_cron(install_dir)
+    
     print("✓ Configurazione automatica completata")
+
+
+def setup_heartbeat_cron(install_dir: Path) -> bool:
+    """
+    Configura il cron job per l'heartbeat se non già presente.
+    Usa /etc/cron.d/ per evitare conflitti con crontab utente.
+    
+    Returns:
+        True se configurato o già presente
+    """
+    cron_file = Path("/etc/cron.d/proxreporter-heartbeat")
+    heartbeat_script = install_dir / "heartbeat.py"
+    config_file = install_dir / "config.json"
+    log_dir = Path("/var/log/proxreporter")
+    
+    # Verifica che lo script heartbeat esista
+    if not heartbeat_script.exists():
+        print("  ℹ Script heartbeat.py non trovato, skip cron setup")
+        return False
+    
+    # Se il cron esiste già, verifica che sia corretto
+    if cron_file.exists():
+        try:
+            with open(cron_file, 'r') as f:
+                content = f.read()
+                if "heartbeat.py" in content:
+                    print("  ✓ Cron heartbeat già configurato")
+                    return True
+        except Exception:
+            pass
+    
+    # Crea directory log se non esiste
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    
+    # Crea il cron job
+    cron_content = f"""# Proxreporter Heartbeat - Invia stato al Syslog ogni ora
+# Generato automaticamente da update_scripts.py
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+0 * * * * root /usr/bin/python3 {heartbeat_script} -c {config_file} >> {log_dir}/heartbeat.log 2>&1
+"""
+    
+    try:
+        with open(cron_file, 'w') as f:
+            f.write(cron_content)
+        os.chmod(cron_file, 0o644)
+        print(f"  ✓ Cron heartbeat configurato: {cron_file}")
+        return True
+    except PermissionError:
+        print("  ⚠ Permessi insufficienti per creare cron heartbeat")
+        return False
+    except Exception as e:
+        print(f"  ⚠ Errore configurazione cron heartbeat: {e}")
+        return False
 
 
 def main():
