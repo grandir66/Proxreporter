@@ -77,6 +77,29 @@ def get_system_info() -> Dict[str, Any]:
         'proxreporter_version': __version__,
     }
     
+    # Proxmox VE version
+    try:
+        import subprocess
+        import re
+        result = subprocess.run(
+            ["pveversion"], capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            # Output: "pve-manager/8.1.3/abc123 (running kernel: 6.5.11-8-pve)"
+            match = re.match(r"pve-manager/([\d.]+)", result.stdout.strip())
+            if match:
+                info['pve_version'] = match.group(1)
+            else:
+                info['pve_version'] = result.stdout.strip().split()[0]
+    except:
+        pass
+    
+    # Kernel version
+    try:
+        info['kernel_version'] = platform.release()
+    except:
+        pass
+    
     # Uptime (Linux)
     try:
         with open('/proc/uptime', 'r') as f:
