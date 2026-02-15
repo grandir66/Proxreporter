@@ -18,6 +18,14 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from enum import Enum
 
+# Version info
+try:
+    from version import __version__, get_version_string
+except ImportError:
+    __version__ = "unknown"
+    def get_version_string():
+        return "Proxreporter (version unknown)"
+
 logger = logging.getLogger("proxreporter")
 
 
@@ -149,6 +157,7 @@ class SyslogSender:
             "timestamp": time.time(),
             "level": severity.value,
             "_app": self.app_name,
+            "_app_version": __version__,
             "_facility": "proxreporter",
         }
         

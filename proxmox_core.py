@@ -1364,8 +1364,15 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
     
     html_file = output_dir / f"{codcli}_{nomecliente}_report.html"
     
+    # Get version info
+    try:
+        from version import __version__ as app_version
+    except ImportError:
+        app_version = "unknown"
+    
     # Prepare data for template
     report_data = {
+        "version": app_version,
         "client": {
             "codcli": codcli,
             "nomecliente": nomecliente,
@@ -3251,14 +3258,21 @@ def main() -> None:
         logger.error("Altra istanza in esecuzione.")
         sys.exit(1)
         
-    logger.info("=== Start Execution ===")
+    # Log version info
+    try:
+        from version import get_version_string
+        version_str = get_version_string()
+    except ImportError:
+        version_str = "Proxreporter (version unknown)"
+    
+    logger.info(f"=== {version_str} - Start Execution ===")
     try:
         run_report(config, final_codcli, final_nomecliente, server_identifier, output_dir, args.no_upload)
     except Exception as e:
         logger.exception("Errore fatale")
         sys.exit(1)
     finally:
-        logger.info("=== End Execution ===")
+        logger.info(f"=== {version_str} - End Execution ===")
 
 
 

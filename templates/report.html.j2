@@ -825,11 +825,11 @@
 
         <!-- Footer -->
         <div class="footer">
-            <p>Generato automaticamente da <strong>Proxreporter</strong> il {{ date_generated }}</p>
+            <p>Generato automaticamente da <strong>Proxreporter v{{ version|default('2.5.0') }}</strong> il {{ date_generated }}</p>
             <p>Report completo dell'infrastruttura Proxmox VE</p>
             <hr style="border: none; border-top: 1px solid var(--gray-300); margin: 20px 0;">
             <div style="font-size: 0.8em; color: var(--gray-600);">
-                <p><strong>Proxreporter</strong> - Software di monitoraggio e reporting per infrastrutture Proxmox VE</p>
+                <p><strong>Proxreporter v{{ version|default('2.5.0') }}</strong> - Software di monitoraggio e reporting per infrastrutture Proxmox VE</p>
                 <p>Sviluppato da <strong>Riccardo Grandi</strong></p>
                 <p>&copy; {{ date_generated[:4] }} <strong>Domarc SRL</strong> - Tutti i diritti riservati</p>
                 <p style="margin-top: 10px; font-size: 0.9em;">

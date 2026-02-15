@@ -355,8 +355,15 @@ def main():
     
     args = parser.parse_args()
     
+    # Get version
+    try:
+        from version import get_version_string
+        version_str = get_version_string()
+    except ImportError:
+        version_str = "Proxreporter (version unknown)"
+    
     print(f"\n{'='*60}")
-    print("PROXREPORTER - TEST SISTEMA ALERT")
+    print(f"{version_str} - TEST SISTEMA ALERT")
     print(f"{'='*60}")
     print(f"Config: {args.config}")
     print(f"Host:   {socket.gethostname()}")
