@@ -104,7 +104,14 @@ def get_system_info() -> Dict[str, Any]:
     try:
         with open('/proc/uptime', 'r') as f:
             uptime_seconds = float(f.read().split()[0])
+            info['uptime_seconds'] = int(uptime_seconds)
             info['uptime_hours'] = round(uptime_seconds / 3600, 1)
+            info['uptime_days'] = round(uptime_seconds / 86400, 1)
+            # Formato leggibile: "5d 3h 22m"
+            days = int(uptime_seconds // 86400)
+            hours = int((uptime_seconds % 86400) // 3600)
+            minutes = int((uptime_seconds % 3600) // 60)
+            info['uptime_formatted'] = f"{days}d {hours}h {minutes}m"
     except:
         pass
     
