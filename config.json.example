@@ -112,6 +112,7 @@
         "enabled": true,
         "lookback_hours": 24,
         "site": "default",
+        "syslog_port": 4514,
         "check_node_status": true,
         "check_storage_status": true,
         "check_backup_results": true,

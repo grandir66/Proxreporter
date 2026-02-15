@@ -52,14 +52,16 @@ class PVESyslogSender:
             client_info: Info cliente (codcli, nomecliente)
         """
         syslog_config = config.get("syslog", {})
+        pve_config = config.get("pve_monitor", {})
         
         self.enabled = syslog_config.get("enabled", False)
         self.server = syslog_config.get("host", "")
-        self.port = syslog_config.get("port", 514)
+        # PVE Monitor usa una porta dedicata (default 4514), diversa da Proxreporter (default 8514)
+        self.port = pve_config.get("syslog_port", 4514)
         self.protocol = syslog_config.get("protocol", "tcp").lower()
         self.facility = self.FACILITY_MAP.get(syslog_config.get("facility", "local0"), 16)
         self.format = syslog_config.get("format", "rfc5424").lower()
-        self.app_name = syslog_config.get("app_name", "proxreporter")
+        self.app_name = "pve-monitor"  # App name specifico per PVE Monitor
         
         # Client info per i messaggi
         self.client = {
