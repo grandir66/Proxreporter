@@ -209,15 +209,128 @@ def send_heartbeat_gelf(config: Dict[str, Any], system_info: Dict[str, Any]) -> 
         return False
 
 
+def check_and_update() -> Optional[str]:
+    """
+    Verifica se è disponibile una nuova versione e aggiorna se necessario.
+    Usa un check leggero confrontando solo la versione senza scaricare tutto.
+    
+    Returns:
+        Nuova versione se aggiornato, None altrimenti
+    """
+    import subprocess
+    import urllib.request
+    
+    install_dir = Path(__file__).resolve().parent
+    version_url = "https://raw.githubusercontent.com/grandir66/Proxreporter/main/version.py"
+    
+    try:
+        # Scarica solo version.py remoto (pochi bytes)
+        with urllib.request.urlopen(version_url, timeout=10) as response:
+            remote_content = response.read().decode('utf-8')
+        
+        # Estrai versione remota
+        remote_version = None
+        for line in remote_content.split('\n'):
+            if line.startswith('__version__'):
+                remote_version = line.split('"')[1]
+                break
+        
+        if not remote_version:
+            return None
+        
+        # Confronta con versione locale
+        if remote_version == __version__:
+            logger.debug(f"Versione {__version__} è aggiornata")
+            return None
+        
+        # Versione diversa, verifica se è più recente
+        local_parts = [int(x) for x in __version__.split('.')]
+        remote_parts = [int(x) for x in remote_version.split('.')]
+        
+        if remote_parts <= local_parts:
+            return None
+        
+        logger.info(f"→ Nuova versione disponibile: {__version__} -> {remote_version}")
+        
+        # Esegui aggiornamento tramite git o update_scripts.py
+        git_dir = install_dir / ".git"
+        
+        if git_dir.exists():
+            # Aggiornamento via git
+            result = subprocess.run(
+                ["git", "fetch", "origin"],
+                cwd=install_dir,
+                capture_output=True,
+                timeout=30
+            )
+            if result.returncode == 0:
+                result = subprocess.run(
+                    ["git", "reset", "--hard", "origin/main"],
+                    cwd=install_dir,
+                    capture_output=True,
+                    timeout=30
+                )
+                if result.returncode == 0:
+                    logger.info(f"✓ Aggiornato a v{remote_version} via git")
+                    
+                    # Esegui post-update tasks
+                    update_script = install_dir / "update_scripts.py"
+                    if update_script.exists():
+                        subprocess.run(
+                            [sys.executable, str(update_script)],
+                            cwd=install_dir,
+                            capture_output=True,
+                            timeout=120
+                        )
+                    
+                    return remote_version
+        else:
+            # Aggiornamento via update_scripts.py
+            update_script = install_dir / "update_scripts.py"
+            if update_script.exists():
+                result = subprocess.run(
+                    [sys.executable, str(update_script)],
+                    cwd=install_dir,
+                    capture_output=True,
+                    timeout=120
+                )
+                if result.returncode == 0:
+                    logger.info(f"✓ Aggiornato a v{remote_version}")
+                    return remote_version
+        
+        return None
+        
+    except urllib.error.URLError as e:
+        logger.debug(f"Impossibile verificare aggiornamenti: {e}")
+        return None
+    except Exception as e:
+        logger.debug(f"Errore check aggiornamenti: {e}")
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Proxreporter Heartbeat - Invia stato al Syslog")
     parser.add_argument("-c", "--config", default="/opt/proxreport/config.json",
                         help="Percorso file di configurazione")
     parser.add_argument("-v", "--verbose", action="store_true", help="Output dettagliato")
+    parser.add_argument("--no-update", action="store_true", help="Non verificare aggiornamenti")
     args = parser.parse_args()
     
     if args.verbose:
         logger.setLevel(logging.DEBUG)
+    
+    # Verifica aggiornamenti (prima di tutto)
+    updated_version = None
+    if not args.no_update:
+        updated_version = check_and_update()
+        if updated_version:
+            # Se aggiornato, ricarica il modulo version
+            try:
+                import importlib
+                import version as ver_module
+                importlib.reload(ver_module)
+            except:
+                pass
     
     # Carica configurazione
     config_path = Path(args.config)
@@ -238,6 +351,11 @@ def main():
     
     # Raccogli info sistema
     system_info = get_system_info()
+    
+    # Aggiungi info aggiornamento se presente
+    if updated_version:
+        system_info['updated_to_version'] = updated_version
+        system_info['update_event'] = True
     
     if args.verbose:
         logger.info(f"Sistema: {system_info}")
