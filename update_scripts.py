@@ -205,9 +205,9 @@ def auto_enable_syslog(install_dir: Path) -> bool:
                 "email_min_severity": "warning",
                 "syslog_min_severity": "info",
                 "storage_warning_threshold": 85,
-                "backup_failure": {"email": False, "syslog": True},
-                "upload_failure": {"email": False, "syslog": True},
-                "storage_warning": {"email": False, "syslog": True},
+                "backup_failure": {"email": True, "syslog": True},
+                "upload_failure": {"email": True, "syslog": True},
+                "storage_warning": {"email": True, "syslog": True},
                 "backup_success": {"email": False, "syslog": True},
                 "upload_success": {"email": False, "syslog": True},
                 "report_generated": {"email": False, "syslog": True}
@@ -217,6 +217,26 @@ def auto_enable_syslog(install_dir: Path) -> bool:
         elif not config["alerts"].get("enabled"):
             config["alerts"]["enabled"] = True
             modified = True
+        
+        # Abilita PVE Monitor per l'invio dei report backup a Syslog
+        if "pve_monitor" not in config:
+            config["pve_monitor"] = {
+                "enabled": True,
+                "lookback_hours": 24,
+                "syslog_port": 4514,
+                "check_node_status": True,
+                "check_storage_status": True,
+                "check_backup_results": True,
+                "check_backup_jobs": True,
+                "check_backup_coverage": True,
+                "check_service_status": True
+            }
+            modified = True
+            print("  → PVE Monitor (backup reports) abilitato")
+        elif not config["pve_monitor"].get("enabled"):
+            config["pve_monitor"]["enabled"] = True
+            modified = True
+            print("  → PVE Monitor abilitato")
         
         # Salva se modificato
         if modified:
