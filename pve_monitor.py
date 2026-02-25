@@ -405,13 +405,9 @@ class PVEMonitor:
     Integrato in Proxreporter.
     """
 
+    STATE_FILE = "/var/lib/proxreporter/pve_monitor_state.json"
+
     def __init__(self, config: Dict[str, Any]):
-        """
-        Inizializza il monitor PVE.
-        
-        Args:
-            config: Configurazione completa di Proxreporter
-        """
         self.config = config
         pve_config = config.get("pve_monitor", {})
         
@@ -423,8 +419,9 @@ class PVEMonitor:
         self.check_backup_jobs = pve_config.get("check_backup_jobs", True)
         self.check_backup_coverage = pve_config.get("check_backup_coverage", True)
         self.check_service_status = pve_config.get("check_service_status", True)
+        # Frequenza check backup in ore (default: ogni 6 ore)
+        self.backup_check_interval_hours = pve_config.get("backup_check_interval_hours", 6)
         
-        # Client info - cerca in vari posti
         client_section = config.get("client", {})
         self.client_info = {
             "codcli": config.get("codcli") or client_section.get("codcli", ""),
@@ -435,13 +432,33 @@ class PVEMonitor:
         self.node = get_node_name()
         self.syslog: Optional[PVESyslogSender] = None
 
+    def _load_state(self) -> Dict:
+        """Carica stato persistente (ultimo run backup check, ecc.)"""
+        try:
+            with open(self.STATE_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return {}
+
+    def _save_state(self, state: Dict):
+        """Salva stato persistente"""
+        try:
+            state_dir = os.path.dirname(self.STATE_FILE)
+            os.makedirs(state_dir, exist_ok=True)
+            with open(self.STATE_FILE, "w") as f:
+                json.dump(state, f, indent=2)
+        except Exception as e:
+            logger.debug(f"Impossibile salvare stato: {e}")
+
+    def _should_run_backup_checks(self) -> bool:
+        """Verifica se è il momento di eseguire i check backup (pesanti)"""
+        state = self._load_state()
+        last_backup_check = state.get("last_backup_check", 0)
+        elapsed_hours = (datetime.now(timezone.utc).timestamp() - last_backup_check) / 3600
+        return elapsed_hours >= self.backup_check_interval_hours
+
     def run(self, test_mode: bool = False) -> Dict[str, Any]:
-        """
-        Esegue il monitoraggio PVE completo.
-        
-        Returns:
-            Dizionario con risultati dei controlli
-        """
+        """Esegue il monitoraggio PVE completo."""
         if not self.enabled and not test_mode:
             logger.info("  ℹ PVE Monitor disabilitato")
             return {"enabled": False}
@@ -450,7 +467,10 @@ class PVEMonitor:
         logger.info(f"  Nodo: {self.node}")
         logger.info(f"  Lookback: {self.lookback_hours}h")
         
-        # Inizializza syslog sender
+        run_backup_checks = test_mode or self._should_run_backup_checks()
+        if not run_backup_checks:
+            logger.info(f"  ℹ Check backup saltati (intervallo: ogni {self.backup_check_interval_hours}h)")
+        
         self.syslog = PVESyslogSender(self.config, self.client_info)
         
         # Resetta cache
@@ -463,29 +483,39 @@ class PVEMonitor:
             "checks": {}
         }
         
-        # Esegui controlli
+        # Check leggeri - eseguiti sempre (ogni ora)
         if self.check_node_status:
             results["checks"]["node_status"] = self._collect_node_status(test_mode)
         
         if self.check_storage_status:
             results["checks"]["storage_status"] = self._collect_storage_status(test_mode)
         
-        if self.check_backup_results:
-            results["checks"]["backup_results"] = self._collect_backup_results(test_mode)
-        
-        if self.check_backup_jobs:
-            results["checks"]["backup_jobs"] = self._collect_backup_jobs(test_mode)
-        
-        if self.check_backup_coverage:
-            results["checks"]["backup_coverage"] = self._collect_backup_coverage(test_mode)
-        
         if self.check_service_status:
             results["checks"]["service_status"] = self._collect_service_status(test_mode)
         
+        # Check pesanti (backup) - eseguiti solo a intervalli configurabili
+        if run_backup_checks:
+            if self.check_backup_results:
+                results["checks"]["backup_results"] = self._collect_backup_results(test_mode)
+            
+            if self.check_backup_jobs:
+                results["checks"]["backup_jobs"] = self._collect_backup_jobs(test_mode)
+            
+            if self.check_backup_coverage:
+                results["checks"]["backup_coverage"] = self._collect_backup_coverage(test_mode)
+            
+            # Aggiorna timestamp ultimo check backup
+            state = self._load_state()
+            state["last_backup_check"] = datetime.now(timezone.utc).timestamp()
+            self._save_state(state)
+        else:
+            results["checks"]["backup_skipped"] = f"Next check in {self.backup_check_interval_hours}h interval"
+        
         logger.info("  ✓ PVE Monitor completato")
         
-        # Invia riepilogo anche su porta 8514 (Proxreporter alerts)
-        self._send_summary_to_main_syslog(results, test_mode)
+        # Invia riepilogo solo se ci sono check backup (evita summary vuoti ogni ora)
+        if run_backup_checks:
+            self._send_summary_to_main_syslog(results, test_mode)
         
         return results
     
@@ -733,7 +763,18 @@ class PVEMonitor:
             completed = [t for t in tasks if t.get("status") != "running"]
             logger.info(f"    Trovati {len(completed)} task vzdump completati")
 
-            # Raggruppa task per job
+            # Pre-carica nomi VM dal cluster (una sola chiamata API) per evitare N chiamate individuali
+            vm_names = {}
+            try:
+                for res in get_cluster_resources_cached():
+                    if res.get("type") in ["qemu", "lxc"]:
+                        vm_names[str(res.get("vmid", ""))] = {
+                            "name": res.get("name", ""),
+                            "type": res.get("type", "unknown")
+                        }
+            except:
+                pass
+
             jobs_dict = {}
             
             for task in completed:
@@ -752,22 +793,10 @@ class PVEMonitor:
                 else:
                     status = "warning"
                 
-                # Prova a ottenere info VM
-                vm_name = f"VM-{vmid}"
-                vm_type = "unknown"
-                try:
-                    vm_info = pvesh_get(f"/nodes/{self.node}/qemu/{vmid}")
-                    vm_name = vm_info.get("name", f"VM-{vmid}")
-                    vm_type = "qemu"
-                except:
-                    try:
-                        ct_info = pvesh_get(f"/nodes/{self.node}/lxc/{vmid}")
-                        vm_name = ct_info.get("name", f"CT-{vmid}")
-                        vm_type = "lxc"
-                    except:
-                        pass
+                vm_info = vm_names.get(str(vmid), {})
+                vm_name = vm_info.get("name", f"VM-{vmid}")
+                vm_type = vm_info.get("type", "unknown")
                 
-                # Raggruppa per job (stesso user + timestamp arrotondato a 5 minuti)
                 time_key = int(starttime / 300) * 300
                 job_key = f"{user}_{time_key}"
                 
@@ -797,7 +826,6 @@ class PVEMonitor:
                 })
                 jobs_dict[job_key]["task_ids"].append(upid)
             
-            # Invia un messaggio per ogni job
             jobs_sent = 0
             for job_key, job_data in jobs_dict.items():
                 vms = job_data["vms"]

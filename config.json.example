@@ -111,6 +111,7 @@
     "pve_monitor": {
         "enabled": true,
         "lookback_hours": 24,
+        "backup_check_interval_hours": 6,
         "site": "default",
         "syslog_port": 4514,
         "syslog_format": "json",
