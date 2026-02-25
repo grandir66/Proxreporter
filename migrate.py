@@ -64,6 +64,9 @@ OLD_CRON_PATTERNS = [
     "proxmox-report",
 ]
 
+# Dipendenze richieste
+REQUIRED_PACKAGES = ["git", "python3"]
+
 
 class MigrationResult:
     """Risultato della migrazione"""
@@ -91,6 +94,70 @@ def run_command(cmd: str, check: bool = False) -> Tuple[int, str, str]:
         return -1, "", "Timeout"
     except Exception as e:
         return -1, "", str(e)
+
+
+def check_and_install_dependencies(result: MigrationResult) -> bool:
+    """
+    Verifica e installa le dipendenze necessarie (git, python3).
+    Ritorna True se tutte le dipendenze sono disponibili.
+    """
+    missing = []
+    
+    # Verifica quali pacchetti mancano
+    for pkg in REQUIRED_PACKAGES:
+        code, _, _ = run_command(f"which {pkg}")
+        if code != 0:
+            missing.append(pkg)
+    
+    if not missing:
+        return True
+    
+    logger.info(f"→ Dipendenze mancanti: {', '.join(missing)}")
+    logger.info("→ Installazione dipendenze...")
+    result.actions.append(f"Installazione dipendenze: {', '.join(missing)}")
+    
+    # Rileva package manager
+    pkg_manager = None
+    if run_command("which apt-get")[0] == 0:
+        pkg_manager = "apt"
+    elif run_command("which yum")[0] == 0:
+        pkg_manager = "yum"
+    elif run_command("which dnf")[0] == 0:
+        pkg_manager = "dnf"
+    elif run_command("which apk")[0] == 0:
+        pkg_manager = "apk"
+    
+    if not pkg_manager:
+        result.errors.append("Nessun package manager supportato (apt/yum/dnf/apk)")
+        return False
+    
+    # Installa pacchetti mancanti
+    for pkg in missing:
+        logger.info(f"  Installazione {pkg}...")
+        
+        if pkg_manager == "apt":
+            # Update repo se è il primo pacchetto
+            if pkg == missing[0]:
+                run_command("apt-get update -qq")
+            code, _, stderr = run_command(f"apt-get install -y -qq {pkg}")
+        elif pkg_manager == "yum":
+            code, _, stderr = run_command(f"yum install -y -q {pkg}")
+        elif pkg_manager == "dnf":
+            code, _, stderr = run_command(f"dnf install -y -q {pkg}")
+        elif pkg_manager == "apk":
+            code, _, stderr = run_command(f"apk add --quiet {pkg}")
+        else:
+            code, stderr = 1, "Package manager non supportato"
+        
+        if code == 0:
+            result.actions.append(f"Installato: {pkg}")
+            logger.info(f"  ✓ {pkg} installato")
+        else:
+            result.errors.append(f"Errore installazione {pkg}: {stderr}")
+            logger.error(f"  ✗ Errore installazione {pkg}")
+            return False
+    
+    return True
 
 
 def find_old_installation() -> Optional[Path]:
@@ -493,6 +560,13 @@ def migrate(dry_run: bool = False, force: bool = False) -> MigrationResult:
     logger.info("=== Proxreporter Migration Tool ===")
     if dry_run:
         logger.info("MODO DRY-RUN: nessuna modifica verrà applicata")
+    
+    # 0. Verifica e installa dipendenze (git, python3)
+    logger.info("→ Verifica dipendenze...")
+    if not dry_run:
+        if not check_and_install_dependencies(result):
+            result.errors.append("Impossibile installare dipendenze richieste")
+            return result
     
     # 1. Trova vecchia installazione
     logger.info("→ Ricerca installazione esistente...")
