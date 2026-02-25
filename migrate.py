@@ -631,7 +631,50 @@ def install_new_version(install_dir: Path, result: MigrationResult, dry_run: boo
         except Exception as e:
             result.warnings.append(f"Errore ripristino {filename}: {e}")
     
+    # Installa dipendenze Python
+    install_python_dependencies(install_dir, result)
+    
     return True
+
+
+def install_python_dependencies(install_dir: Path, result: MigrationResult) -> None:
+    """Installa le dipendenze Python richieste (jinja2, paramiko, cryptography)"""
+    logger.info("→ Installazione dipendenze Python...")
+    
+    # Lista dipendenze richieste
+    dependencies = ["jinja2", "paramiko", "cryptography"]
+    
+    # Verifica se requirements.txt esiste
+    requirements_file = install_dir / "requirements.txt"
+    
+    if requirements_file.exists():
+        # Installa da requirements.txt
+        code, stdout, stderr = run_command(f"pip3 install -q -r {requirements_file}")
+        if code == 0:
+            result.actions.append("Dipendenze Python installate (da requirements.txt)")
+            logger.info("  ✓ Dipendenze Python installate")
+        else:
+            # Fallback: installa singolarmente
+            logger.warning(f"  Errore requirements.txt, provo installazione singola...")
+            for dep in dependencies:
+                code, _, _ = run_command(f"pip3 install -q {dep}")
+                if code == 0:
+                    logger.info(f"  ✓ {dep} installato")
+                else:
+                    result.warnings.append(f"Errore installazione {dep}")
+    else:
+        # Installa dipendenze singolarmente
+        for dep in dependencies:
+            code, _, stderr = run_command(f"pip3 install -q {dep}")
+            if code == 0:
+                logger.info(f"  ✓ {dep} installato")
+            else:
+                # Prova con apt se pip fallisce
+                code2, _, _ = run_command(f"apt-get install -y -qq python3-{dep} 2>/dev/null")
+                if code2 == 0:
+                    logger.info(f"  ✓ python3-{dep} installato (apt)")
+                else:
+                    result.warnings.append(f"Impossibile installare {dep}: {stderr}")
 
 
 def restore_config(install_dir: Path, config: Dict[str, Any], result: MigrationResult, dry_run: bool = False) -> bool:
