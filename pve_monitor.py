@@ -108,12 +108,12 @@ class PVESyslogSender:
             # Formato GELF per Graylog - struttura piatta
             syslog_msg = self._build_gelf_message(message_type, payload, severity)
         elif self.format == "json" or self.format == "raw":
-            # Formato JSON raw - come usato dalla versione funzionante
-            # Invia: MESSAGE_TYPE - {json payload}
+            # Formato RFC 5424 con JSON payload - come usato dalla versione funzionante
+            # Formato: <priority>1 timestamp hostname app_name pid message_type - {json}
             json_payload = json.dumps(payload, separators=(",", ":"), default=str)
-            syslog_msg = f"{message_type} - {json_payload}"
+            syslog_msg = f"<{priority}>1 {timestamp} {self.hostname} {self.app_name} {os.getpid()} {message_type} - {json_payload}"
         else:
-            # Formato RFC 5424 standard
+            # Formato RFC 5424 standard (stesso di json)
             json_payload = json.dumps(payload, separators=(",", ":"), default=str)
             syslog_msg = f"<{priority}>1 {timestamp} {self.hostname} {self.app_name} {os.getpid()} {message_type} - {json_payload}"
 
