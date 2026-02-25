@@ -64,6 +64,11 @@ class PVESyslogSender:
         self.format = pve_config.get("syslog_format", syslog_config.get("format", "json")).lower()
         self.app_name = "pve-monitor"  # App name specifico per PVE Monitor
         
+        # Porta principale per copia GELF (8514)
+        self.main_port = syslog_config.get("port", 8514)
+        # Abilita invio copia anche a porta principale in formato GELF
+        self.send_to_main = pve_config.get("send_to_main_syslog", True)
+        
         # Client info per i messaggi
         self.client = {
             "code": client_info.get("codcli", ""),
@@ -116,6 +121,7 @@ class PVESyslogSender:
             return True
 
         try:
+            # Invio alla porta PVE (4514) - formato JSON raw
             if self.protocol == "tcp":
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(10)
@@ -133,10 +139,37 @@ class PVESyslogSender:
                     sock.sendto(syslog_msg, (self.server, self.port))
                 sock.close()
             
-            logger.info(f"  ✓ PVE Syslog inviato: {message_type} ({len(syslog_msg)} bytes)")
+            logger.info(f"  ✓ PVE Syslog inviato: {message_type} -> porta {self.port}")
+            
+            # Invio copia anche alla porta principale (8514) in formato GELF
+            if self.send_to_main and self.main_port != self.port:
+                self._send_to_main_port(message_type, payload, severity)
+            
             return True
         except Exception as e:
             logger.error(f"  ✗ Errore invio syslog PVE: {e}")
+            return False
+    
+    def _send_to_main_port(self, message_type: str, payload: Dict, severity: int) -> bool:
+        """Invia copia del messaggio alla porta principale (8514) in formato GELF"""
+        try:
+            gelf_msg = self._build_gelf_message(message_type, payload, severity)
+            
+            if self.protocol == "tcp":
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(10)
+                sock.connect((self.server, self.main_port))
+                sock.sendall(gelf_msg)
+                sock.close()
+            else:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.sendto(gelf_msg, (self.server, self.main_port))
+                sock.close()
+            
+            logger.debug(f"  ✓ Copia GELF inviata a porta {self.main_port}")
+            return True
+        except Exception as e:
+            logger.debug(f"  ⚠ Errore copia GELF a porta {self.main_port}: {e}")
             return False
 
     def _build_gelf_message(self, message_type: str, payload: Dict, severity: int) -> bytes:
