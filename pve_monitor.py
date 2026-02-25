@@ -832,6 +832,8 @@ class PVEMonitor:
                 jobs_dict[job_key]["task_ids"].append(upid)
             
             jobs_sent = 0
+            success_jobs = []
+            
             for job_key, job_data in jobs_dict.items():
                 vms = job_data["vms"]
                 start_time = job_data["start_time"]
@@ -849,8 +851,6 @@ class PVEMonitor:
                 else:
                     job_status = "success"
                 
-                # Invia PVE_BACKUP_RESULT solo per job con problemi (evita 48+ messaggi per successi)
-                # Con send_backup_result_on_success: true si inviano anche i successi
                 if job_status in ("failed", "warning") or self.send_backup_result_on_success or test_mode:
                     data = {
                         "status": job_status,
@@ -869,9 +869,32 @@ class PVEMonitor:
                     if self.syslog:
                         self.syslog.send("PVE_BACKUP_RESULT", data, test_mode)
                         jobs_sent += 1
+                elif job_status == "success":
+                    success_jobs.append({
+                        "user": job_data["user"],
+                        "vm_count": len(vms),
+                        "start_time": start_time,
+                        "end_time": end_time,
+                    })
             
-            success_count = len(jobs_dict) - jobs_sent
-            logger.info(f"    Processati {len(jobs_dict)} job di backup ({jobs_sent} inviati, {success_count} successi omessi)")
+            # Un messaggio accumulativo per tutti i successi
+            if success_jobs and self.syslog:
+                total_vms = sum(j["vm_count"] for j in success_jobs)
+                first_start = min(j["start_time"] for j in success_jobs)
+                last_end = max(j["end_time"] for j in success_jobs)
+                users = list({j["user"] for j in success_jobs})
+                summary_data = {
+                    "status": "success",
+                    "job_count": len(success_jobs),
+                    "vm_count": total_vms,
+                    "first_start": datetime.fromtimestamp(first_start, tz=timezone.utc).isoformat() if first_start else None,
+                    "last_end": datetime.fromtimestamp(last_end, tz=timezone.utc).isoformat() if last_end else None,
+                    "users": users,
+                }
+                self.syslog.send("PVE_BACKUP_RESULT_SUMMARY", summary_data, test_mode)
+                jobs_sent += 1
+            
+            logger.info(f"    Processati {len(jobs_dict)} job di backup ({jobs_sent} messaggi inviati)")
             return {"sent": True, "jobs": len(jobs_dict), "tasks": len(completed)}
         except Exception as e:
             logger.error(f"    ✗ Errore raccolta task backup: {e}")
