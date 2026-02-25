@@ -405,15 +405,16 @@ def run_post_migration(install_dir: Path, result: MigrationResult, dry_run: bool
     # Imposta permessi eseguibili
     run_command(f"chmod +x {install_dir}/*.py 2>/dev/null")
     
-    # Esegui update_scripts.py per configurare cron e sincronizzare config
-    update_script = install_dir / "update_scripts.py"
-    if update_script.exists():
-        result.actions.append("Esecuzione post-update tasks...")
-        code, stdout, stderr = run_command(f"python3 {update_script}")
-        if code == 0:
-            result.actions.append("Post-update completato")
-        else:
-            result.warnings.append(f"Errore post-update: {stderr}")
+    # Verifica se esiste config.json, altrimenti crea uno minimale
+    config_path = install_dir / "config.json"
+    if not config_path.exists():
+        result.warnings.append("config.json non trovato - esegui setup.py per configurare")
+    
+    # Configura cron job per heartbeat
+    setup_heartbeat_cron(install_dir, result, dry_run)
+    
+    # Configura cron job giornaliero
+    setup_daily_cron(install_dir, result, dry_run)
     
     # Verifica versione installata
     version_file = install_dir / "version.py"
@@ -426,6 +427,53 @@ def run_post_migration(install_dir: Path, result: MigrationResult, dry_run: bool
                     break
         except:
             pass
+
+
+def setup_heartbeat_cron(install_dir: Path, result: MigrationResult, dry_run: bool = False) -> None:
+    """Configura cron job per heartbeat orario"""
+    cron_file = Path("/etc/cron.d/proxreporter-heartbeat")
+    cron_content = f"""# Proxreporter Heartbeat - ogni ora
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+0 * * * * root /usr/bin/python3 {install_dir}/heartbeat.py --config {install_dir}/config.json >> /var/log/proxreporter/heartbeat.log 2>&1
+"""
+    
+    if dry_run:
+        result.actions.append(f"[DRY-RUN] Creerei {cron_file}")
+        return
+    
+    try:
+        # Crea directory log se non esiste
+        Path("/var/log/proxreporter").mkdir(parents=True, exist_ok=True)
+        
+        cron_file.write_text(cron_content)
+        os.chmod(cron_file, 0o644)
+        result.actions.append(f"Cron heartbeat configurato: {cron_file}")
+    except Exception as e:
+        result.warnings.append(f"Errore configurazione cron heartbeat: {e}")
+
+
+def setup_daily_cron(install_dir: Path, result: MigrationResult, dry_run: bool = False) -> None:
+    """Configura cron job per report giornaliero"""
+    cron_file = Path("/etc/cron.d/proxreporter")
+    cron_content = f"""# Proxreporter Daily Report - ore 6:00
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+0 6 * * * root /usr/bin/python3 {install_dir}/proxmox_core.py --config {install_dir}/config.json --auto-update >> /var/log/proxreporter/cron.log 2>&1
+"""
+    
+    if dry_run:
+        result.actions.append(f"[DRY-RUN] Creerei {cron_file}")
+        return
+    
+    try:
+        cron_file.write_text(cron_content)
+        os.chmod(cron_file, 0o644)
+        result.actions.append(f"Cron giornaliero configurato: {cron_file}")
+    except Exception as e:
+        result.warnings.append(f"Errore configurazione cron giornaliero: {e}")
 
 
 def migrate(dry_run: bool = False, force: bool = False) -> MigrationResult:
