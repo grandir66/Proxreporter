@@ -132,32 +132,59 @@ class PVESyslogSender:
             return False
 
     def _build_gelf_message(self, message_type: str, payload: Dict, severity: int) -> bytes:
-        """Costruisce messaggio GELF per Graylog"""
+        """
+        Costruisce messaggio GELF per Graylog.
+        Espande tutti i campi del payload direttamente nel messaggio GELF (flat structure).
+        """
         import time
         
         short_message = f"{message_type}: {payload.get('status', 'info')}"
         
+        # Costruisci messaggio base GELF
         gelf_msg = {
             "version": "1.1",
             "host": self.hostname,
             "short_message": short_message,
-            "full_message": json.dumps(payload, default=str),
             "timestamp": time.time(),
             "level": severity,
-            "_app": self.app_name,
-            "_module": "pve_monitor",
-            "_app_version": __version__,
-            "_message_type": message_type,
-            "_client_code": self.client.get("code", ""),
-            "_client_name": self.client.get("name", ""),
         }
         
-        # Aggiungi campi principali dal payload
-        for key in ["status", "server_name", "vm_count", "jobs_total"]:
-            if key in payload:
-                gelf_msg[f"_{key}"] = str(payload[key])
+        # Espandi TUTTI i campi del payload come campi GELF con prefisso _
+        # Questo rende il messaggio "piatto" come richiesto da Graylog
+        self._flatten_to_gelf(gelf_msg, payload, "")
         
-        return (json.dumps(gelf_msg) + '\0').encode('utf-8')
+        # Assicurati che i campi standard siano presenti
+        gelf_msg["_app"] = self.app_name
+        gelf_msg["_module"] = "pve_monitor"
+        gelf_msg["_app_version"] = __version__
+        gelf_msg["_message_type"] = message_type
+        
+        return (json.dumps(gelf_msg, default=str) + '\0').encode('utf-8')
+    
+    def _flatten_to_gelf(self, gelf_msg: Dict, data: Any, prefix: str) -> None:
+        """
+        Appiattisce ricorsivamente un dizionario in campi GELF con prefisso _.
+        Es: {"client": {"code": "123"}} -> {"_client_code": "123"}
+        """
+        if isinstance(data, dict):
+            for key, value in data.items():
+                new_prefix = f"{prefix}_{key}" if prefix else key
+                if isinstance(value, dict):
+                    # Ricorsione per dizionari innestati
+                    self._flatten_to_gelf(gelf_msg, value, new_prefix)
+                elif isinstance(value, list):
+                    # Per le liste, serializza come JSON se complesse, altrimenti conta
+                    if len(value) > 0 and isinstance(value[0], dict):
+                        # Lista di oggetti - serializza come JSON per full_message
+                        gelf_msg[f"_{new_prefix}_count"] = len(value)
+                        # Aggiungi anche la lista serializzata per riferimento
+                        gelf_msg[f"_{new_prefix}"] = json.dumps(value, default=str)
+                    else:
+                        # Lista semplice
+                        gelf_msg[f"_{new_prefix}"] = json.dumps(value, default=str)
+                else:
+                    # Valore scalare
+                    gelf_msg[f"_{new_prefix}"] = value
 
 
 def pvesh_get(path: str, **params) -> Any:
