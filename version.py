@@ -13,7 +13,7 @@ Copyright (c) 2024-2026 Domarc SRL - Tutti i diritti riservati.
 # MAJOR: modifiche incompatibili
 # MINOR: nuove funzionalità retrocompatibili
 # PATCH: bug fix retrocompatibili
-__version__ = "2.11.0"
+__version__ = "2.12.0"
 
 # Build date (aggiornato automaticamente)
 __build_date__ = "2026-02-25"

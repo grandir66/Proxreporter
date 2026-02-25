@@ -407,11 +407,16 @@ class PVEMonitor:
         backup_jobs = backup_results.get("jobs", 0) if isinstance(backup_results, dict) else 0
         backup_tasks = backup_results.get("tasks", 0) if isinstance(backup_results, dict) else 0
         
-        # Determina severità
+        # Conta backup falliti (status != success nei risultati)
+        backup_failed = 0
+        node_status = checks.get("node_status", {})
+        
+        # Determina severità - solo problemi reali, non VM escluse dal backup
+        # Le VM senza backup schedulato sono informative (potrebbero essere escluse intenzionalmente)
         if services_failed > 0:
             status = "failed"
             level = 3  # ERROR
-        elif not_covered > 0:
+        elif backup_failed > 0:
             status = "warning"
             level = 4  # WARNING
         else:
@@ -760,7 +765,8 @@ class PVEMonitor:
                 })
             
             count = len(guests)
-            status = "warning" if count > 0 else "success"
+            # Status info (non warning) - le VM escluse sono intenzionali
+            status = "info" if count > 0 else "success"
             
             data = {
                 "status": status,
@@ -772,7 +778,7 @@ class PVEMonitor:
                 self.syslog.send("PVE_BACKUP_COVERAGE", data, test_mode)
             
             if count > 0:
-                logger.warning(f"    ⚠ {count} VM/CT senza backup schedulato")
+                logger.info(f"    ℹ {count} VM/CT senza backup schedulato (potrebbero essere escluse)")
             else:
                 logger.info("    ✓ Tutte le VM/CT hanno backup schedulato")
             
