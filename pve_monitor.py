@@ -419,6 +419,7 @@ class PVEMonitor:
         self.check_storage_status = pve_config.get("check_storage_status", True)
         self.check_backup_results = pve_config.get("check_backup_results", True)
         self.check_backup_jobs = pve_config.get("check_backup_jobs", True)
+        self.send_backup_result_on_success = pve_config.get("send_backup_result_on_success", False)
         self.check_backup_coverage = pve_config.get("check_backup_coverage", True)
         self.check_service_status = pve_config.get("check_service_status", True)
         # Frequenza check backup in ore (default: ogni 6 ore)
@@ -848,26 +849,29 @@ class PVEMonitor:
                 else:
                     job_status = "success"
                 
-                data = {
-                    "status": job_status,
-                    "job_start_time": datetime.fromtimestamp(start_time, tz=timezone.utc).isoformat() if start_time else None,
-                    "job_end_time": datetime.fromtimestamp(end_time, tz=timezone.utc).isoformat() if end_time else None,
-                    "job_duration_seconds": job_duration,
-                    "job_duration_minutes": round(job_duration / 60, 1),
-                    "user": job_data["user"],
-                    "vm_count": len(vms),
-                    "vms_success": vms_success,
-                    "vms_warning": vms_warning,
-                    "vms_failed": vms_failed,
-                    "vms": vms,
-                    "task_ids": job_data["task_ids"]
-                }
-                
-                if self.syslog:
-                    self.syslog.send("PVE_BACKUP_RESULT", data, test_mode)
-                    jobs_sent += 1
+                # Invia PVE_BACKUP_RESULT solo per job con problemi (evita 48+ messaggi per successi)
+                # Con send_backup_result_on_success: true si inviano anche i successi
+                if job_status in ("failed", "warning") or self.send_backup_result_on_success or test_mode:
+                    data = {
+                        "status": job_status,
+                        "job_start_time": datetime.fromtimestamp(start_time, tz=timezone.utc).isoformat() if start_time else None,
+                        "job_end_time": datetime.fromtimestamp(end_time, tz=timezone.utc).isoformat() if end_time else None,
+                        "job_duration_seconds": job_duration,
+                        "job_duration_minutes": round(job_duration / 60, 1),
+                        "user": job_data["user"],
+                        "vm_count": len(vms),
+                        "vms_success": vms_success,
+                        "vms_warning": vms_warning,
+                        "vms_failed": vms_failed,
+                        "vms": vms,
+                        "task_ids": job_data["task_ids"]
+                    }
+                    if self.syslog:
+                        self.syslog.send("PVE_BACKUP_RESULT", data, test_mode)
+                        jobs_sent += 1
             
-            logger.info(f"    Processati {len(jobs_dict)} job di backup")
+            success_count = len(jobs_dict) - jobs_sent
+            logger.info(f"    Processati {len(jobs_dict)} job di backup ({jobs_sent} inviati, {success_count} successi omessi)")
             return {"sent": True, "jobs": len(jobs_dict), "tasks": len(completed)}
         except Exception as e:
             logger.error(f"    ✗ Errore raccolta task backup: {e}")

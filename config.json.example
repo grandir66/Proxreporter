@@ -120,7 +120,8 @@
         "check_backup_results": true,
         "check_backup_jobs": true,
         "check_backup_coverage": true,
-        "check_service_status": true
+        "check_service_status": true,
+        "send_backup_result_on_success": false
     },
     "features": {
         "collect_cluster": true,
