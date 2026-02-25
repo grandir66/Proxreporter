@@ -224,6 +224,8 @@ def auto_enable_syslog(install_dir: Path) -> bool:
                 "enabled": True,
                 "lookback_hours": 24,
                 "syslog_port": 4514,
+                "syslog_format": "json",
+                "send_to_main_syslog": True,
                 "check_node_status": True,
                 "check_storage_status": True,
                 "check_backup_results": True,
@@ -233,10 +235,31 @@ def auto_enable_syslog(install_dir: Path) -> bool:
             }
             modified = True
             print("  → PVE Monitor (backup reports) abilitato")
-        elif not config["pve_monitor"].get("enabled"):
-            config["pve_monitor"]["enabled"] = True
+        else:
+            # Assicura che le nuove opzioni siano presenti
+            if not config["pve_monitor"].get("enabled"):
+                config["pve_monitor"]["enabled"] = True
+                modified = True
+                print("  → PVE Monitor abilitato")
+            if "syslog_format" not in config["pve_monitor"]:
+                config["pve_monitor"]["syslog_format"] = "json"
+                modified = True
+            if "send_to_main_syslog" not in config["pve_monitor"]:
+                config["pve_monitor"]["send_to_main_syslog"] = True
+                modified = True
+        
+        # Abilita hardware monitoring
+        if "hardware_monitoring" not in config:
+            config["hardware_monitoring"] = {
+                "enabled": True,
+                "check_disks": True,
+                "check_memory": True,
+                "check_raid": True,
+                "check_temperature": True,
+                "check_kernel": True
+            }
             modified = True
-            print("  → PVE Monitor abilitato")
+            print("  → Hardware monitoring abilitato")
         
         # Salva se modificato
         if modified:

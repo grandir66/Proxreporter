@@ -85,13 +85,17 @@ python3 migrate.py
 | `--verbose` / `-v` | Detailed output |
 
 **What the migration does:**
-1. Detects old installations in `/opt/proxreport`, `/opt/proxreport/v2`, `/opt/proxreporter`, etc.
-2. Backs up old installation with timestamp
-3. Migrates configuration from legacy format to new format
-4. Preserves encryption keys (`.secret.key`, `.encryption_key`)
-5. Removes old cron jobs
-6. Installs new Git-based version
-7. Configures daily report + hourly heartbeat cron jobs
+1. **Installs dependencies** (`git`, `python3`, `jinja2`, `paramiko`, `cryptography`)
+2. **Detects old installations** in `/opt/proxreport`, `/opt/proxreport/v2`, `/opt/proxreporter`, etc.
+3. **Extracts parameters from old cron jobs** (`--codcli`, `--nomecliente`, `--output-dir`)
+4. **Prompts for missing parameters** (SFTP password)
+5. **Backs up old installation** with timestamp
+6. **Migrates configuration** from legacy format to new format
+7. **Preserves encryption keys** (`.secret.key`, `.encryption_key`)
+8. **Removes old cron jobs**
+9. **Installs new Git-based version**
+10. **Configures daily report + hourly heartbeat cron jobs**
+11. **Enables all monitoring functions** (syslog, hardware, PVE monitor)
 
 ---
 
@@ -270,6 +274,37 @@ python3 /opt/proxreport/test_alerts.py --config /opt/proxreport/config.json
 **Log files:**
 - `/var/log/proxreporter/cron.log` - Execution logs
 - `/var/log/proxreporter/*.csv` - Generated reports
+
+---
+
+## Syslog Architecture
+
+Proxreporter uses **two syslog ports** with different formats:
+
+| Port | Format | Content | Input Type (Graylog) |
+|------|--------|---------|----------------------|
+| **8514** | GELF | Heartbeat, Hardware status, Alerts, PVE Summary | GELF TCP |
+| **4514** | JSON Raw | PVE Backup Jobs, Backup Results, Services | Raw/Plaintext TCP |
+
+### Message Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         PROXREPORTER                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  heartbeat.py ──────┬──► GELF ──────────────────► Port 8514    │
+│                     │                                           │
+│  hardware_monitor ──┘                                           │
+│                                                                 │
+│  pve_monitor.py ────┬──► JSON Raw ──────────────► Port 4514    │
+│                     │                                           │
+│                     └──► GELF (copy) ───────────► Port 8514    │
+│                                                                 │
+│  alert_manager ─────────► GELF ──────────────────► Port 8514    │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
