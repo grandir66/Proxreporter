@@ -207,27 +207,24 @@ class PVESyslogSender:
     
     def _flatten_to_gelf(self, gelf_msg: Dict, data: Any, prefix: str) -> None:
         """
-        Appiattisce ricorsivamente un dizionario in campi GELF con prefisso _.
-        Es: {"client": {"code": "123"}} -> {"_client_code": "123"}
+        Appiattisce ricorsivamente in campi GELF con prefisso _.
+        Liste di dict vengono espanse: services -> _services_0_name, _services_0_state, ...
+        storages -> _storages_0_name, _storages_0_type, _storages_0_used_percent, ...
         """
         if isinstance(data, dict):
             for key, value in data.items():
                 new_prefix = f"{prefix}_{key}" if prefix else key
                 if isinstance(value, dict):
-                    # Ricorsione per dizionari innestati
                     self._flatten_to_gelf(gelf_msg, value, new_prefix)
                 elif isinstance(value, list):
-                    # Per le liste, serializza come JSON se complesse, altrimenti conta
                     if len(value) > 0 and isinstance(value[0], dict):
-                        # Lista di oggetti - serializza come JSON per full_message
                         gelf_msg[f"_{new_prefix}_count"] = len(value)
-                        # Aggiungi anche la lista serializzata per riferimento
-                        gelf_msg[f"_{new_prefix}"] = json.dumps(value, default=str)
+                        for i, item in enumerate(value[:25]):  # max 25 (services ~12, storages ~10)
+                            if isinstance(item, dict):
+                                self._flatten_to_gelf(gelf_msg, item, f"{new_prefix}_{i}")
                     else:
-                        # Lista semplice
                         gelf_msg[f"_{new_prefix}"] = json.dumps(value, default=str)
                 else:
-                    # Valore scalare
                     gelf_msg[f"_{new_prefix}"] = value
 
 

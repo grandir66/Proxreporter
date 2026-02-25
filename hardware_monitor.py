@@ -765,42 +765,42 @@ class HardwareMonitor:
         return info if len(info) > 1 else None
     
     def _get_all_temperatures(self) -> List[Dict[str, Any]]:
-        """Raccoglie tutte le temperature del sistema"""
+        """Raccoglie tutte le temperature del sistema (sensors, hwmon, thermal_zone)"""
         temps = []
         
-        # Prova con sensors
+        # 1. Prova sensors -j (lm-sensors JSON)
         output = self._run_command("sensors -j 2>/dev/null")
         if output:
             try:
                 import json
                 data = json.loads(output)
                 for chip, values in data.items():
-                    if isinstance(values, dict):
+                    if isinstance(values, dict) and not chip.startswith("Adapter"):
                         for sensor, readings in values.items():
-                            if isinstance(readings, dict):
+                            if isinstance(readings, dict) and sensor and not sensor.startswith("Adapter"):
                                 for key, value in readings.items():
                                     if "input" in key.lower() and isinstance(value, (int, float)):
                                         temps.append({
                                             "chip": chip,
                                             "sensor": sensor,
-                                            "temperature": round(value, 1)
+                                            "temperature": round(float(value), 1)
                                         })
-            except:
+            except (json.JSONDecodeError, ValueError, TypeError):
                 pass
         
-        # Fallback: prova con sensors semplice
+        # 2. Fallback: sensors output testuale (supporta °C, C, degC)
         if not temps:
             output = self._run_command("sensors 2>/dev/null")
             if output:
                 current_chip = ""
                 for line in output.split('\n'):
-                    if not line.startswith(' ') and ':' not in line and line.strip():
-                        current_chip = line.strip()
-                    elif '°C' in line:
-                        parts = line.split(':')
+                    if line.strip() and not line.startswith(' ') and ':' not in line.strip():
+                        current_chip = line.strip().rstrip(':')
+                    elif current_chip and ('°C' in line or 'C' in line or 'degC' in line.lower()):
+                        parts = line.split(':', 1)
                         if len(parts) >= 2:
                             sensor = parts[0].strip()
-                            temp_match = re.search(r'([+-]?\d+\.?\d*)\s*°C', parts[1])
+                            temp_match = re.search(r'([+-]?\d+\.?\d*)\s*[°]?\s*C', parts[1], re.IGNORECASE)
                             if temp_match:
                                 temps.append({
                                     "chip": current_chip,
@@ -808,20 +808,46 @@ class HardwareMonitor:
                                     "temperature": float(temp_match.group(1))
                                 })
         
-        # Fallback: /sys/class/thermal
+        # 3. Fallback: /sys/class/hwmon (molti server non hanno lm-sensors)
         if not temps:
-            output = self._run_command("cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null")
-            if output:
-                for i, line in enumerate(output.strip().split('\n')):
-                    try:
-                        temp = int(line) / 1000
-                        temps.append({
-                            "chip": "thermal_zone",
-                            "sensor": f"zone{i}",
-                            "temperature": temp
-                        })
-                    except ValueError:
-                        pass
+            try:
+                hwmon_path = Path("/sys/class/hwmon")
+                if hwmon_path.exists():
+                    for hwdir in sorted(hwmon_path.iterdir()):
+                        if not hwdir.name.startswith("hwmon"):
+                            continue
+                        name_file = hwdir / "name"
+                        chip = name_file.read_text().strip() if name_file.exists() else hwdir.name
+                        for temp_input in sorted(hwdir.glob("temp*_input")):
+                            try:
+                                val = int((hwdir / temp_input.name).read_text().strip())
+                                temp_c = val / 1000
+                                label_file = hwdir / temp_input.name.replace("_input", "_label")
+                                sensor = label_file.read_text().strip() if label_file.exists() else temp_input.stem.replace("_input", "")
+                                temps.append({"chip": chip, "sensor": sensor, "temperature": temp_c})
+                            except (ValueError, OSError):
+                                pass
+            except OSError:
+                pass
+        
+        # 4. Fallback: /sys/class/thermal
+        if not temps:
+            try:
+                thermal_path = Path("/sys/class/thermal")
+                if thermal_path.exists():
+                    for i, zdir in enumerate(sorted(thermal_path.glob("thermal_zone*"))):
+                        temp_file = zdir / "temp"
+                        type_file = zdir / "type"
+                        if temp_file.exists():
+                            try:
+                                val = int(temp_file.read_text().strip())
+                                temp_c = val / 1000
+                                zone_type = type_file.read_text().strip() if type_file.exists() else f"zone{i}"
+                                temps.append({"chip": "thermal_zone", "sensor": zone_type, "temperature": temp_c})
+                            except (ValueError, OSError):
+                                pass
+            except OSError:
+                pass
         
         return temps
     
