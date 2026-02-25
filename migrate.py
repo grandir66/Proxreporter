@@ -339,6 +339,71 @@ def migrate_config(old_config: Dict[str, Any]) -> Dict[str, Any]:
     return new_config
 
 
+def create_config_from_cron_params(cron_params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Crea una configurazione completa partendo dai parametri estratti dal cron.
+    Usa valori di default per SFTP e altri parametri.
+    """
+    config = {
+        "codcli": cron_params.get("codcli", ""),
+        "nomecliente": cron_params.get("nomecliente", ""),
+        "client": {
+            "codcli": cron_params.get("codcli", ""),
+            "nomecliente": cron_params.get("nomecliente", ""),
+            "server_identifier": ""
+        },
+        "proxmox": {
+            "enabled": True,
+            "host": "localhost:8006",
+            "username": "root@pam",
+            "password": "",
+            "verify_ssl": False
+        },
+        "sftp": {
+            "enabled": True,
+            "host": "sftp.domarc.it",
+            "port": 11122,
+            "username": "proxmox",
+            "password": "",  # Da configurare
+            "base_path": "/home/proxmox/uploads"
+        },
+        "system": {
+            "output_directory": cron_params.get("output_directory", "/var/log/proxreporter"),
+            "max_file_copies": 5,
+            "log_level": "INFO"
+        },
+        "syslog": {
+            "enabled": True,
+            "host": "syslog.domarc.it",
+            "port": 8514,
+            "protocol": "tcp",
+            "format": "gelf"
+        },
+        "smtp": {
+            "enabled": False
+        },
+        "hardware_monitoring": {
+            "enabled": True
+        },
+        "pve_monitor": {
+            "enabled": True,
+            "syslog_port": 4514
+        },
+        "features": {
+            "collect_cluster": True,
+            "collect_host": True,
+            "collect_storage": True,
+            "collect_network": True,
+            "collect_vms": True,
+            "collect_backup": True
+        }
+    }
+    
+    logger.info(f"  ✓ Configurazione creata: codcli={config['codcli']}, nomecliente={config['nomecliente']}")
+    
+    return config
+
+
 def backup_old_installation(old_path: Path, result: MigrationResult) -> Optional[Path]:
     """Crea backup della vecchia installazione"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -353,8 +418,77 @@ def backup_old_installation(old_path: Path, result: MigrationResult) -> Optional
         return None
 
 
-def remove_old_cron_jobs(result: MigrationResult, dry_run: bool = False) -> None:
-    """Rimuove vecchi cron job"""
+def extract_config_from_cron() -> Optional[Dict[str, Any]]:
+    """
+    Estrae parametri di configurazione dai vecchi cron job.
+    Cerca --codcli, --nomecliente, --output-dir nei comandi cron.
+    """
+    import re
+    
+    config = {}
+    cron_lines = []
+    
+    # Cerca in /etc/cron.d/
+    cron_files = [
+        Path("/etc/cron.d/proxreport"),
+        Path("/etc/cron.d/proxreporter"),
+        Path("/etc/cron.d/proxmox-reporter"),
+    ]
+    
+    for cron_file in cron_files:
+        if cron_file.exists():
+            try:
+                cron_lines.extend(cron_file.read_text().split('\n'))
+            except:
+                pass
+    
+    # Cerca nel crontab utente
+    code, stdout, _ = run_command("crontab -l 2>/dev/null")
+    if code == 0 and stdout:
+        cron_lines.extend(stdout.split('\n'))
+    
+    # Cerca nel crontab di root
+    code, stdout, _ = run_command("cat /var/spool/cron/crontabs/root 2>/dev/null")
+    if code == 0 and stdout:
+        cron_lines.extend(stdout.split('\n'))
+    
+    # Analizza le linee per estrarre parametri
+    for line in cron_lines:
+        if 'proxmox_core' in line.lower() or 'proxreport' in line.lower():
+            # Estrai --codcli
+            match = re.search(r'--codcli\s+(\S+)', line)
+            if match:
+                config['codcli'] = match.group(1)
+            
+            # Estrai --nomecliente
+            match = re.search(r'--nomecliente\s+(\S+)', line)
+            if match:
+                config['nomecliente'] = match.group(1)
+            
+            # Estrai --output-dir
+            match = re.search(r'--output-dir\s+(\S+)', line)
+            if match:
+                config['output_directory'] = match.group(1)
+            
+            # Se abbiamo trovato almeno codcli, usciamo
+            if 'codcli' in config:
+                break
+    
+    if config:
+        logger.info(f"  ✓ Parametri estratti da cron: codcli={config.get('codcli')}, nomecliente={config.get('nomecliente')}")
+        return config
+    
+    return None
+
+
+def remove_old_cron_jobs(result: MigrationResult, dry_run: bool = False) -> Optional[Dict[str, Any]]:
+    """
+    Rimuove vecchi cron job.
+    Ritorna eventuali parametri estratti dai cron prima di rimuoverli.
+    """
+    # Prima estrai parametri dai cron
+    extracted_config = extract_config_from_cron()
+    
     cron_files = [
         Path("/etc/cron.d/proxreport"),
         Path("/etc/cron.d/proxreporter"),
@@ -391,6 +525,8 @@ def remove_old_cron_jobs(result: MigrationResult, dry_run: bool = False) -> None
         if removed and not dry_run:
             new_content = '\n'.join(new_crontab)
             run_command(f"echo '{new_content}' | crontab -")
+    
+    return extracted_config
 
 
 def install_new_version(install_dir: Path, result: MigrationResult, dry_run: bool = False) -> bool:
@@ -641,7 +777,7 @@ def migrate(dry_run: bool = False, force: bool = False) -> MigrationResult:
         if old_config:
             logger.info(f"  ✓ Configurazione trovata con {len(old_config)} parametri")
         else:
-            result.warnings.append("Configurazione non trovata o non leggibile")
+            logger.info("  Nessun config.json trovato, cercherò parametri nel cron...")
     
     # 3. Migra configurazione
     migrated_config = None
@@ -657,9 +793,15 @@ def migrate(dry_run: bool = False, force: bool = False) -> MigrationResult:
         if backup_path:
             result.config_backup = backup_path
     
-    # 5. Rimuovi vecchi cron job
+    # 5. Estrai parametri dai cron job PRIMA di rimuoverli
     logger.info("→ Pulizia vecchi cron job...")
-    remove_old_cron_jobs(result, dry_run)
+    cron_config = remove_old_cron_jobs(result, dry_run)
+    
+    # Se non abbiamo config ma abbiamo estratto parametri dal cron, crea config
+    if not migrated_config and cron_config:
+        logger.info("→ Creazione configurazione da parametri cron...")
+        migrated_config = create_config_from_cron_params(cron_config)
+        result.actions.append(f"Configurazione creata da cron: codcli={cron_config.get('codcli')}")
     
     # 6. Installa nuova versione
     logger.info("→ Installazione nuova versione...")
