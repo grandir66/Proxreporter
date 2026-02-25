@@ -454,6 +454,43 @@ class PVEMonitor:
             gelf_msg["_memory_used_percent"] = node_data.get("memory_used_percent", 0)
             gelf_msg["_uptime_hours"] = node_data.get("uptime_hours", 0)
         
+        # Aggiungi info storage
+        storage_status = checks.get("storage_status", {})
+        if isinstance(storage_status, dict):
+            storages = storage_status.get("storages", [])
+            gelf_msg["_storage_count"] = len(storages)
+            
+            # Aggiungi dettagli per ogni storage (max 10 per evitare messaggi troppo grandi)
+            for i, stor in enumerate(storages[:10]):
+                prefix = f"_storage_{i}"
+                gelf_msg[f"{prefix}_name"] = stor.get("name", "")
+                gelf_msg[f"{prefix}_type"] = stor.get("type", "")
+                gelf_msg[f"{prefix}_total_gb"] = stor.get("total_gb", 0)
+                gelf_msg[f"{prefix}_used_gb"] = stor.get("used_gb", 0)
+                gelf_msg[f"{prefix}_free_gb"] = stor.get("free_gb", 0)
+                gelf_msg[f"{prefix}_used_percent"] = stor.get("used_percent", 0)
+                gelf_msg[f"{prefix}_status"] = stor.get("status", "")
+            
+            # Segnala storage con problemi
+            storage_warning = sum(1 for s in storages if s.get("status") == "warning")
+            storage_critical = sum(1 for s in storages if s.get("status") == "failed")
+            gelf_msg["_storage_warning_count"] = storage_warning
+            gelf_msg["_storage_critical_count"] = storage_critical
+            
+            # Aggiorna status se storage ha problemi
+            if storage_critical > 0 and status == "success":
+                status = "failed"
+                level = 3
+                gelf_msg["_status"] = status
+                gelf_msg["level"] = level
+                gelf_msg["short_message"] = f"PVE_MONITOR_SUMMARY: {status} - {self.node}"
+            elif storage_warning > 0 and status == "success":
+                status = "warning"
+                level = 4
+                gelf_msg["_status"] = status
+                gelf_msg["level"] = level
+                gelf_msg["short_message"] = f"PVE_MONITOR_SUMMARY: {status} - {self.node}"
+        
         message = (json.dumps(gelf_msg) + '\0').encode('utf-8')
         
         if test_mode:
@@ -564,9 +601,9 @@ class PVEMonitor:
                 if self.syslog:
                     self.syslog.send("PVE_STORAGE_STATUS", data, test_mode)
                 
-                return {"sent": True, "count": len(backup_storages)}
+                return {"sent": True, "count": len(backup_storages), "storages": backup_storages, "overall_status": overall_status}
             
-            return {"sent": False, "count": 0}
+            return {"sent": False, "count": 0, "storages": []}
         except Exception as e:
             logger.error(f"    ✗ Errore raccolta storage: {e}")
             return {"sent": False, "error": str(e)}
