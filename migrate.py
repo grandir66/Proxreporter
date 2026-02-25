@@ -394,10 +394,24 @@ def remove_old_cron_jobs(result: MigrationResult, dry_run: bool = False) -> None
 
 
 def install_new_version(install_dir: Path, result: MigrationResult, dry_run: bool = False) -> bool:
-    """Installa nuova versione da Git"""
+    """Installa nuova versione da Git, preservando config.json e .secret.key"""
     if dry_run:
         result.actions.append(f"[DRY-RUN] Clonerei repository in {install_dir}")
         return True
+    
+    # File da preservare durante l'aggiornamento
+    preserve_files = ["config.json", ".secret.key", ".encryption_key"]
+    preserved = {}
+    
+    # Salva file da preservare
+    for filename in preserve_files:
+        filepath = install_dir / filename
+        if filepath.exists():
+            try:
+                preserved[filename] = filepath.read_text()
+                logger.debug(f"  Preservato: {filename}")
+            except Exception as e:
+                logger.warning(f"  Errore lettura {filename}: {e}")
     
     # Se esiste già come Git repo, aggiorna
     if is_git_installation(install_dir):
@@ -407,25 +421,35 @@ def install_new_version(install_dir: Path, result: MigrationResult, dry_run: boo
             result.errors.append(f"Errore git update: {stderr}")
             return False
         result.actions.append("Repository aggiornato")
-        return True
-    
-    # Se esiste ma non è Git, rimuovi (dopo backup)
-    if install_dir.exists():
-        try:
-            shutil.rmtree(install_dir)
-            result.actions.append(f"Rimossa vecchia directory: {install_dir}")
-        except Exception as e:
-            result.errors.append(f"Errore rimozione directory: {e}")
+    else:
+        # Se esiste ma non è Git, rimuovi (dopo backup)
+        if install_dir.exists():
+            try:
+                shutil.rmtree(install_dir)
+                result.actions.append(f"Rimossa vecchia directory: {install_dir}")
+            except Exception as e:
+                result.errors.append(f"Errore rimozione directory: {e}")
+                return False
+        
+        # Clone nuovo repository
+        result.actions.append(f"Clonazione repository in {install_dir}...")
+        code, _, stderr = run_command(f"git clone -b {BRANCH} {REPO_URL} {install_dir}")
+        if code != 0:
+            result.errors.append(f"Errore git clone: {stderr}")
             return False
+        
+        result.actions.append("Repository clonato con successo")
     
-    # Clone nuovo repository
-    result.actions.append(f"Clonazione repository in {install_dir}...")
-    code, _, stderr = run_command(f"git clone -b {BRANCH} {REPO_URL} {install_dir}")
-    if code != 0:
-        result.errors.append(f"Errore git clone: {stderr}")
-        return False
+    # Ripristina file preservati
+    for filename, content in preserved.items():
+        filepath = install_dir / filename
+        try:
+            filepath.write_text(content)
+            result.actions.append(f"Ripristinato: {filename}")
+            logger.info(f"  ✓ Ripristinato: {filename}")
+        except Exception as e:
+            result.warnings.append(f"Errore ripristino {filename}: {e}")
     
-    result.actions.append("Repository clonato con successo")
     return True
 
 
@@ -583,10 +607,27 @@ def migrate(dry_run: bool = False, force: bool = False) -> MigrationResult:
             logger.info("  ✓ Installazione già basata su Git")
             result.actions.append("Installazione già su Git, eseguo solo aggiornamento")
             
-            # Aggiorna comunque
+            # Preserva config.json prima dell'update
+            config_path = old_path / "config.json"
+            old_config = None
+            if config_path.exists():
+                logger.info("→ Preservo configurazione esistente...")
+                old_config = load_old_config(old_path)
+                if old_config:
+                    result.actions.append(f"Configurazione preservata ({len(old_config)} parametri)")
+            
+            # Aggiorna repository
             if install_new_version(old_path, result, dry_run):
+                # Ripristina config se era stato sovrascritto
+                if old_config and not config_path.exists():
+                    restore_config(old_path, old_config, result, dry_run)
+                
                 run_post_migration(old_path, result, dry_run)
                 result.success = True
+                
+                # Segna configurazione come migrata se presente
+                if config_path.exists():
+                    result.config_migrated = True
             return result
     else:
         logger.info("  Nessuna installazione esistente trovata")
