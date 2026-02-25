@@ -174,14 +174,16 @@ def send_heartbeat_gelf(config: Dict[str, Any], system_info: Dict[str, Any]) -> 
         "full_message": f"Sistema {hostname} ({codcli} - {nomecliente}) attivo e funzionante",
         "timestamp": time.time(),
         "level": 6,  # INFO
+        # Campi comuni standard
         "_app": "proxreporter",
         "_module": "heartbeat",
         "_app_version": __version__,
+        "_event": "heartbeat",
         "_message_type": "HEARTBEAT",
         "_client_code": codcli,
         "_client_name": nomecliente,
         "_hostname": hostname,
-        "_event": "heartbeat",
+        "_status": "success",
     }
     
     # Aggiungi info sistema
@@ -249,14 +251,17 @@ def send_hardware_status_gelf(config: Dict[str, Any], hw_status: Dict[str, Any])
         "full_message": f"Hardware check su {hostname}: {summary.get('total_alerts', 0)} alert ({summary.get('critical', 0)} critical, {summary.get('warning', 0)} warning)",
         "timestamp": time.time(),
         "level": level,
+        # Campi comuni standard
         "_app": "proxreporter",
         "_module": "hardware_monitor",
         "_app_version": __version__,
+        "_event": "hardware.status",
         "_message_type": "HARDWARE_STATUS",
         "_client_code": codcli,
         "_client_name": nomecliente,
         "_hostname": hostname,
         "_status": overall_status,
+        # Campi specifici
         "_total_alerts": summary.get("total_alerts", 0),
         "_critical_count": summary.get("critical", 0),
         "_warning_count": summary.get("warning", 0),

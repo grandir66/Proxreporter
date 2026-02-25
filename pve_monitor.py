@@ -174,32 +174,34 @@ class PVESyslogSender:
             return False
 
     def _build_gelf_message(self, message_type: str, payload: Dict, severity: int) -> bytes:
-        """
-        Costruisce messaggio GELF per Graylog.
-        Espande tutti i campi del payload direttamente nel messaggio GELF (flat structure).
-        """
+        """Costruisce messaggio GELF con campi comuni standardizzati."""
         import time
         
-        short_message = f"{message_type}: {payload.get('status', 'info')}"
+        status = payload.get("status", "info")
+        event = message_type.lower().replace("pve_", "pve.")
         
-        # Costruisci messaggio base GELF
         gelf_msg = {
             "version": "1.1",
             "host": self.hostname,
-            "short_message": short_message,
+            "short_message": f"{message_type}: {status}",
             "timestamp": time.time(),
             "level": severity,
+            # Campi comuni standard (presenti in tutti i messaggi GELF)
+            "_app": "proxreporter",
+            "_module": "pve_monitor",
+            "_app_version": __version__,
+            "_event": event,
+            "_message_type": message_type,
+            "_client_code": self.client.get("code", ""),
+            "_client_name": self.client.get("name", ""),
+            "_hostname": self.hostname,
+            "_status": status,
         }
         
-        # Espandi TUTTI i campi del payload come campi GELF con prefisso _
-        # Questo rende il messaggio "piatto" come richiesto da Graylog
-        self._flatten_to_gelf(gelf_msg, payload, "")
-        
-        # Assicurati che i campi standard siano presenti
-        gelf_msg["_app"] = self.app_name
-        gelf_msg["_module"] = "pve_monitor"
-        gelf_msg["_app_version"] = __version__
-        gelf_msg["_message_type"] = message_type
+        # Espandi campi specifici del payload (skip quelli già in campi comuni)
+        skip_keys = {"message_type", "version", "timestamp", "client", "agent_hostname", "status"}
+        filtered_payload = {k: v for k, v in payload.items() if k not in skip_keys}
+        self._flatten_to_gelf(gelf_msg, filtered_payload, "")
         
         return (json.dumps(gelf_msg, default=str) + '\0').encode('utf-8')
     
@@ -566,7 +568,6 @@ class PVEMonitor:
             status = "success"
             level = 6  # INFO
         
-        # Messaggio GELF
         gelf_msg = {
             "version": "1.1",
             "host": self.node,
@@ -574,15 +575,18 @@ class PVEMonitor:
             "full_message": f"PVE Monitor completato su {self.node}: {backup_tasks} task backup, {not_covered} VM senza backup, {services_failed} servizi failed",
             "timestamp": time.time(),
             "level": level,
+            # Campi comuni standard
             "_app": "proxreporter",
             "_module": "pve_monitor",
             "_app_version": __version__,
+            "_event": "pve.monitor.summary",
             "_message_type": "PVE_MONITOR_SUMMARY",
             "_client_code": self.client_info.get("codcli", ""),
             "_client_name": self.client_info.get("nomecliente", ""),
             "_hostname": self.node,
-            "_pve_version": results.get("pve_version", ""),
             "_status": status,
+            # Campi specifici
+            "_pve_version": results.get("pve_version", ""),
             "_backup_tasks": backup_tasks,
             "_backup_jobs": backup_jobs,
             "_vms_not_covered": not_covered,

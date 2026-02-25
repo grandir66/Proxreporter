@@ -85,6 +85,7 @@ class SyslogSender:
             facility: facility code (default LOCAL0 = 16)
             app_name: nome applicazione (default 'proxreporter')
         """
+        self.full_config = config
         self.config = config.get('syslog', {})
         self.enabled = self.config.get('enabled', False)
         self.host = self.config.get('host', '')
@@ -93,6 +94,8 @@ class SyslogSender:
         self.facility = int(self.config.get('facility', self.FACILITY_LOCAL0))
         self.app_name = self.config.get('app_name', 'proxreporter')
         self.hostname = socket.gethostname()
+        self.codcli = config.get('codcli', '')
+        self.nomecliente = config.get('nomecliente', '')
         self._socket = None
     
     def _get_socket(self) -> Optional[socket.socket]:
@@ -144,10 +147,12 @@ class SyslogSender:
     
     def _build_gelf_message(self, severity: AlertSeverity, message: str,
                             structured_data: Optional[Dict] = None) -> bytes:
-        """
-        Costruisce un messaggio in formato GELF (Graylog Extended Log Format).
-        """
+        """Costruisce un messaggio in formato GELF con campi comuni standardizzati."""
         import time
+        
+        alert_type = (structured_data or {}).get("alert_type", "custom")
+        event = alert_type.replace("_", ".") if alert_type else "alert"
+        status = "success" if severity.value >= 6 else ("warning" if severity.value >= 4 else "error")
         
         gelf_msg = {
             "version": "1.1",
@@ -156,17 +161,24 @@ class SyslogSender:
             "full_message": message,
             "timestamp": time.time(),
             "level": severity.value,
+            # Campi comuni standard
             "_app": self.app_name,
-            "_module": "alert_manager",
+            "_module": "proxreporter",
             "_app_version": __version__,
-            "_facility": "proxreporter",
+            "_event": event,
+            "_message_type": alert_type.upper() if alert_type else "ALERT",
+            "_client_code": self.codcli,
+            "_client_name": self.nomecliente,
+            "_hostname": self.hostname,
+            "_status": status,
         }
         
-        # Aggiungi campi strutturati con prefisso _ (GELF requirement)
         if structured_data:
             for key, value in structured_data.items():
+                if key in ("alert_type",):
+                    continue
                 gelf_key = f"_{key}" if not key.startswith('_') else key
-                gelf_msg[gelf_key] = str(value)
+                gelf_msg[gelf_key] = str(value) if not isinstance(value, (int, float, bool)) else value
         
         return (json.dumps(gelf_msg) + '\0').encode('utf-8')
     
