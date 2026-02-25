@@ -310,11 +310,12 @@ class PVEMonitor:
         self.check_backup_coverage = pve_config.get("check_backup_coverage", True)
         self.check_service_status = pve_config.get("check_service_status", True)
         
-        # Client info
+        # Client info - cerca in vari posti
+        client_section = config.get("client", {})
         self.client_info = {
-            "codcli": config.get("codcli", ""),
-            "nomecliente": config.get("nomecliente", ""),
-            "site": pve_config.get("site", "default")
+            "codcli": config.get("codcli") or client_section.get("codcli", ""),
+            "nomecliente": config.get("nomecliente") or client_section.get("nomecliente", ""),
+            "site": pve_config.get("site") or client_section.get("site", "default")
         }
         
         self.node = get_node_name()

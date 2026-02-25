@@ -363,6 +363,19 @@ def main():
     # Invia heartbeat
     success = send_heartbeat_gelf(config, system_info)
     
+    # Esegui PVE Monitor se abilitato (invia stato backup/storage/servizi)
+    pve_config = config.get("pve_monitor", {})
+    if pve_config.get("enabled", False):
+        try:
+            from pve_monitor import PVEMonitor
+            logger.info("→ Esecuzione PVE Monitor...")
+            monitor = PVEMonitor(config)
+            monitor.run()
+        except ImportError:
+            logger.debug("PVE Monitor non disponibile")
+        except Exception as e:
+            logger.warning(f"Errore PVE Monitor: {e}")
+    
     sys.exit(0 if success else 1)
 
 
