@@ -355,6 +355,50 @@ def get_cluster_resources_cached() -> List:
     return _cluster_resources_cache
 
 
+def get_latest_backup_info(node: str, storage: str, vmid: str, vm_type: str) -> Dict:
+    """Ottiene informazioni sull'ultimo backup di una VM/CT dal repository PBS (con cache)"""
+    try:
+        content = get_storage_content_cached(node, storage)
+        
+        vm_backups = []
+        for backup in content:
+            if backup.get("vmid") == int(vmid) and backup.get("content") == "backup":
+                if vm_type == "qemu" and backup.get("subtype") == "qemu":
+                    vm_backups.append(backup)
+                elif vm_type == "lxc" and backup.get("subtype") == "lxc":
+                    vm_backups.append(backup)
+        
+        if vm_backups:
+            latest = sorted(vm_backups, key=lambda x: x.get("ctime", 0), reverse=True)[0]
+            backup_time = latest.get("ctime", 0)
+            
+            verification = latest.get("verification", {})
+            if isinstance(verification, dict):
+                verify_state = verification.get("state", "")
+            else:
+                verify_state = ""
+            
+            if verify_state == "ok" or backup_time > 0:
+                backup_status = "success"
+            elif verify_state == "failed":
+                backup_status = "failed"
+            else:
+                backup_status = "unknown"
+            
+            return {
+                "backup_status": backup_status,
+                "backup_date": datetime.fromtimestamp(backup_time, tz=timezone.utc).isoformat() if backup_time else None,
+                "backup_size_bytes": latest.get("size", 0),
+                "backup_size_gb": round(latest.get("size", 0) / (1024**3), 2) if latest.get("size", 0) > 0 else None,
+                "backup_volid": latest.get("volid", ""),
+                "verification_state": verify_state if verify_state else None
+            }
+    except Exception as e:
+        logger.debug(f"Errore info backup VM {vmid} da storage {storage}: {e}")
+    
+    return {}
+
+
 class PVEMonitor:
     """
     Monitora lo stato di Proxmox VE e invia alert via Syslog.
@@ -798,22 +842,26 @@ class PVEMonitor:
             return {"sent": False, "error": str(e)}
 
     def _collect_backup_jobs(self, test_mode: bool) -> Dict:
-        """Raccoglie informazioni sui job di backup schedulati"""
+        """Raccoglie informazioni sui job di backup schedulati con dettaglio VM"""
         logger.info("  → Raccolta job di backup schedulati...")
+        
+        clear_caches()
         
         try:
             cluster_jobs = []
             try:
                 cluster_jobs = pvesh_get("/cluster/backup")
+                logger.info(f"    Trovati {len(cluster_jobs)} job via API")
             except:
                 pass
             
-            if not cluster_jobs:
-                # Prova a leggere da file
+            if not cluster_jobs or all(not job.get("vms") and not job.get("all") for job in cluster_jobs):
                 try:
                     with open("/etc/pve/jobs.cfg", "r") as f:
                         for line in f:
                             line = line.strip()
+                            if not line or line.startswith("#"):
+                                continue
                             if line.startswith("backup:"):
                                 parts = line.split(":")
                                 if len(parts) >= 2:
@@ -824,33 +872,213 @@ class PVEMonitor:
                                             key, value = part.split("=", 1)
                                             job_data[key] = value
                                     cluster_jobs.append(job_data)
+                    logger.info(f"    Letti {len(cluster_jobs)} job da /etc/pve/jobs.cfg")
                 except:
                     pass
             
-            jobs_sent = 0
+            backup_jobs = []
+            
             for job in cluster_jobs:
                 job_id = job.get("id", "")
                 if not job_id:
                     continue
                 
+                try:
+                    try:
+                        job_details = pvesh_get(f"/cluster/backup/{job_id}")
+                        job.update(job_details)
+                    except:
+                        pass
+                    
+                    vms_value = job.get("vms") or job.get("vmid", "")
+                    all_flag = job.get("all", False) or job.get("all") == 1
+                    exclude_value = job.get("exclude", "")
+                    
+                    vm_ids = []
+                    
+                    if all_flag:
+                        all_vms = []
+                        nodes_str = job.get("nodes", "")
+                        nodes_list = [n.strip() for n in nodes_str.split(",") if n.strip()] if nodes_str else []
+                        
+                        if not nodes_list:
+                            try:
+                                resources = get_cluster_resources_cached()
+                                for res in resources:
+                                    if res.get("type") in ["qemu", "lxc"] and res.get("template", 0) == 0:
+                                        all_vms.append({"vmid": str(res.get("vmid", "")), "node": res.get("node", ""), "type": res.get("type", "qemu")})
+                            except:
+                                try:
+                                    cluster_nodes = pvesh_get("/nodes")
+                                    nodes_list = [n.get("node", "") for n in cluster_nodes if n.get("node")]
+                                except:
+                                    nodes_list = [self.node]
+                        
+                        if nodes_list:
+                            for n in nodes_list:
+                                try:
+                                    for vm in pvesh_get(f"/nodes/{n}/qemu"):
+                                        if vm.get("template", 0) == 0:
+                                            all_vms.append({"vmid": str(vm.get("vmid", "")), "node": n, "type": "qemu"})
+                                except:
+                                    pass
+                                try:
+                                    for ct in pvesh_get(f"/nodes/{n}/lxc"):
+                                        if ct.get("template", 0) == 0:
+                                            all_vms.append({"vmid": str(ct.get("vmid", "")), "node": n, "type": "lxc"})
+                                except:
+                                    pass
+                        
+                        seen = set()
+                        unique_vms = [v for v in all_vms if v["vmid"] and v["vmid"] not in seen and not seen.add(v["vmid"])]
+                        
+                        exclude_ids = [v.strip() for v in re.split(r'[,;\s]+', str(exclude_value)) if v.strip() and v.strip().isdigit()] if exclude_value else []
+                        vm_ids = [v["vmid"] for v in unique_vms if v["vmid"] not in exclude_ids]
+                        
+                    elif isinstance(vms_value, list):
+                        vm_ids = [str(v) for v in vms_value if v]
+                    elif isinstance(vms_value, str) and vms_value.strip():
+                        for v in re.split(r'[,;\s]+', vms_value.strip()):
+                            v = v.strip()
+                            if not v:
+                                continue
+                            match = re.match(r'(?:vm|lxc|qemu|ct)[/:]?(\d+)', v, re.IGNORECASE)
+                            if match:
+                                vm_ids.append(match.group(1))
+                            elif v.isdigit():
+                                vm_ids.append(v)
+                    
+                    if not vm_ids:
+                        continue
+                    
+                    # Determina nodi per la raccolta info VM
+                    nodes_str = job.get("nodes", "")
+                    nodes_list = [n.strip() for n in nodes_str.split(",") if n.strip()] if nodes_str else []
+                    if not nodes_list:
+                        try:
+                            cluster_nodes = pvesh_get("/nodes")
+                            nodes_list = [n.get("node", "") for n in cluster_nodes if n.get("node")]
+                        except:
+                            nodes_list = [self.node]
+                    
+                    # Raccogli info VM dal cluster
+                    cluster_vms = {}
+                    for n in nodes_list:
+                        try:
+                            for vm in pvesh_get(f"/nodes/{n}/qemu"):
+                                vm_id = str(vm.get("vmid", ""))
+                                if vm_id:
+                                    cluster_vms[vm_id] = {"name": vm.get("name", f"VM-{vm_id}"), "type": "qemu", "node": n, "status": vm.get("status", "unknown"), "maxdisk": vm.get("maxdisk", 0), "maxmem": vm.get("maxmem", 0)}
+                        except:
+                            pass
+                        try:
+                            for ct in pvesh_get(f"/nodes/{n}/lxc"):
+                                ct_id = str(ct.get("vmid", ""))
+                                if ct_id:
+                                    cluster_vms[ct_id] = {"name": ct.get("name", f"CT-{ct_id}"), "type": "lxc", "node": n, "status": ct.get("status", "unknown"), "maxdisk": ct.get("maxdisk", 0), "maxmem": ct.get("maxmem", 0)}
+                        except:
+                            pass
+                    
+                    job_storage = job.get("storage", "")
+                    vm_list = []
+                    
+                    for vmid in vm_ids:
+                        vm_info = cluster_vms.get(vmid)
+                        
+                        if vm_info:
+                            vm_data = {
+                                "vmid": vmid,
+                                "name": vm_info["name"],
+                                "type": vm_info["type"],
+                                "node": vm_info["node"],
+                                "status": vm_info.get("status", "unknown"),
+                                "disk_size_bytes": vm_info.get("maxdisk", 0) or None,
+                                "disk_size_gb": round(vm_info["maxdisk"] / (1024**3), 2) if vm_info.get("maxdisk", 0) > 0 else None,
+                                "memory_bytes": vm_info.get("maxmem", 0) or None,
+                                "memory_gb": round(vm_info["maxmem"] / (1024**3), 2) if vm_info.get("maxmem", 0) > 0 else None,
+                            }
+                        else:
+                            # Cerca in cluster/resources
+                            vm_name, vm_type, vm_node, vm_disk, vm_mem, vm_status = f"VM-{vmid}", "unknown", nodes_list[0], 0, 0, "unknown"
+                            try:
+                                for res in get_cluster_resources_cached():
+                                    if str(res.get("vmid", "")) == vmid:
+                                        vm_name = res.get("name", vm_name)
+                                        vm_type = res.get("type", vm_type)
+                                        vm_node = res.get("node", vm_node)
+                                        vm_disk = res.get("maxdisk", 0)
+                                        vm_mem = res.get("maxmem", 0)
+                                        vm_status = res.get("status", vm_status)
+                                        break
+                            except:
+                                pass
+                            vm_data = {
+                                "vmid": vmid, "name": vm_name, "type": vm_type, "node": vm_node, "status": vm_status,
+                                "disk_size_bytes": vm_disk or None, "disk_size_gb": round(vm_disk / (1024**3), 2) if vm_disk > 0 else None,
+                                "memory_bytes": vm_mem or None, "memory_gb": round(vm_mem / (1024**3), 2) if vm_mem > 0 else None,
+                            }
+                        
+                        # Aggiungi info backup dal repository
+                        if job_storage and vm_data.get("type") != "unknown":
+                            backup_info = get_latest_backup_info(self.node, job_storage, vmid, vm_data.get("type", "qemu"))
+                            if backup_info:
+                                vm_data.update(backup_info)
+                        
+                        vm_list.append(vm_data)
+                    
+                    # Filtra VM con backup recente
+                    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.lookback_hours)
+                    vms_with_recent = []
+                    for vm in vm_list:
+                        backup_date_str = vm.get("backup_date")
+                        if backup_date_str:
+                            try:
+                                backup_dt = datetime.fromisoformat(backup_date_str.replace("Z", "+00:00"))
+                                if backup_dt >= cutoff_time:
+                                    vms_with_recent.append(vm)
+                            except:
+                                pass
+                    
+                    if vms_with_recent:
+                        backup_jobs.append({
+                            "job_id": job_id,
+                            "nodes": job.get("nodes", self.node),
+                            "storage": job.get("storage", "unknown"),
+                            "schedule": job.get("schedule", ""),
+                            "enabled": job.get("enabled", True) if "enabled" in job else True,
+                            "mode": job.get("mode", "snapshot"),
+                            "compress": job.get("compress", ""),
+                            "all": job.get("all", False),
+                            "vms": vms_with_recent,
+                            "vm_count": len(vms_with_recent),
+                        })
+                except Exception as e:
+                    logger.debug(f"    Errore elaborazione job {job_id}: {e}")
+                    continue
+            
+            # Invia ogni job al syslog
+            jobs_sent = 0
+            for job in backup_jobs:
                 data = {
                     "status": "success" if job.get("enabled", True) else "warning",
-                    "job_id": job_id,
-                    "nodes": job.get("nodes", self.node),
-                    "storage": job.get("storage", "unknown"),
+                    "job_id": job.get("job_id", ""),
+                    "nodes": job.get("nodes", ""),
+                    "storage": job.get("storage", ""),
                     "schedule": job.get("schedule", ""),
                     "enabled": job.get("enabled", True),
-                    "mode": job.get("mode", "snapshot"),
+                    "mode": job.get("mode", ""),
                     "compress": job.get("compress", ""),
                     "all": job.get("all", False),
+                    "vm_count": job.get("vm_count", 0),
+                    "vms": job.get("vms", []),
                 }
-                
                 if self.syslog:
                     self.syslog.send("PVE_BACKUP_JOB", data, test_mode)
                     jobs_sent += 1
             
-            logger.info(f"    Trovati {len(cluster_jobs)} job schedulati")
-            return {"sent": True, "jobs": len(cluster_jobs)}
+            total_vms = sum(j.get("vm_count", 0) for j in backup_jobs)
+            logger.info(f"    Trovati {len(backup_jobs)} job con {total_vms} VM/CT totali")
+            return {"sent": True, "jobs": len(backup_jobs), "vms": total_vms}
         except Exception as e:
             logger.error(f"    ✗ Errore raccolta job backup: {e}")
             return {"sent": False, "error": str(e)}
