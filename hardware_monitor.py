@@ -679,3 +679,210 @@ class HardwareMonitor:
                 else HardwareStatus.OK.value
             )
         }
+    
+    def get_full_status(self) -> Dict[str, Any]:
+        """
+        Raccoglie lo stato completo dell'hardware (non solo alert).
+        Include informazioni su dischi, temperature, memoria, RAID.
+        """
+        status = {
+            "disks": [],
+            "temperatures": [],
+            "memory": {},
+            "raid": [],
+            "alerts": self.to_dict(),
+            "summary": self.get_summary()
+        }
+        
+        # Raccogli info dischi
+        disks = self._get_disk_devices()
+        for disk in disks:
+            disk_info = self._get_disk_info(disk)
+            if disk_info:
+                status["disks"].append(disk_info)
+        
+        # Raccogli temperature
+        temps = self._get_all_temperatures()
+        if temps:
+            status["temperatures"] = temps
+        
+        # Raccogli info memoria
+        mem_info = self._get_memory_info()
+        if mem_info:
+            status["memory"] = mem_info
+        
+        # Raccogli info RAID
+        raid_info = self._get_raid_info()
+        if raid_info:
+            status["raid"] = raid_info
+        
+        return status
+    
+    def _get_disk_info(self, device: str) -> Optional[Dict[str, Any]]:
+        """Ottiene informazioni dettagliate su un disco"""
+        info = {"device": device}
+        
+        # SMART health
+        output = self._run_command(f"smartctl -H {device} 2>/dev/null")
+        if output:
+            if "PASSED" in output:
+                info["smart_status"] = "PASSED"
+            elif "FAILED" in output:
+                info["smart_status"] = "FAILED"
+            else:
+                info["smart_status"] = "UNKNOWN"
+        
+        # Modello e seriale
+        output = self._run_command(f"smartctl -i {device} 2>/dev/null")
+        if output:
+            for line in output.split('\n'):
+                if "Model" in line or "Device Model" in line:
+                    info["model"] = line.split(':')[-1].strip()
+                elif "Serial" in line:
+                    info["serial"] = line.split(':')[-1].strip()
+                elif "Capacity" in line or "User Capacity" in line:
+                    info["capacity"] = line.split(':')[-1].strip()
+        
+        # Temperatura
+        output = self._run_command(f"smartctl -A {device} 2>/dev/null")
+        if output:
+            for line in output.split('\n'):
+                if "Temperature" in line and "Celsius" in line:
+                    parts = line.split()
+                    for i, p in enumerate(parts):
+                        if p.isdigit() and i > 0:
+                            info["temperature"] = int(p)
+                            break
+                # Settori riallocati
+                if "Reallocated_Sector" in line:
+                    parts = line.split()
+                    if len(parts) >= 10:
+                        try:
+                            info["reallocated_sectors"] = int(parts[9])
+                        except ValueError:
+                            pass
+        
+        return info if len(info) > 1 else None
+    
+    def _get_all_temperatures(self) -> List[Dict[str, Any]]:
+        """Raccoglie tutte le temperature del sistema"""
+        temps = []
+        
+        # Prova con sensors
+        output = self._run_command("sensors -j 2>/dev/null")
+        if output:
+            try:
+                import json
+                data = json.loads(output)
+                for chip, values in data.items():
+                    if isinstance(values, dict):
+                        for sensor, readings in values.items():
+                            if isinstance(readings, dict):
+                                for key, value in readings.items():
+                                    if "input" in key.lower() and isinstance(value, (int, float)):
+                                        temps.append({
+                                            "chip": chip,
+                                            "sensor": sensor,
+                                            "temperature": round(value, 1)
+                                        })
+            except:
+                pass
+        
+        # Fallback: prova con sensors semplice
+        if not temps:
+            output = self._run_command("sensors 2>/dev/null")
+            if output:
+                current_chip = ""
+                for line in output.split('\n'):
+                    if not line.startswith(' ') and ':' not in line and line.strip():
+                        current_chip = line.strip()
+                    elif '°C' in line:
+                        parts = line.split(':')
+                        if len(parts) >= 2:
+                            sensor = parts[0].strip()
+                            temp_match = re.search(r'([+-]?\d+\.?\d*)\s*°C', parts[1])
+                            if temp_match:
+                                temps.append({
+                                    "chip": current_chip,
+                                    "sensor": sensor,
+                                    "temperature": float(temp_match.group(1))
+                                })
+        
+        # Fallback: /sys/class/thermal
+        if not temps:
+            output = self._run_command("cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null")
+            if output:
+                for i, line in enumerate(output.strip().split('\n')):
+                    try:
+                        temp = int(line) / 1000
+                        temps.append({
+                            "chip": "thermal_zone",
+                            "sensor": f"zone{i}",
+                            "temperature": temp
+                        })
+                    except ValueError:
+                        pass
+        
+        return temps
+    
+    def _get_memory_info(self) -> Dict[str, Any]:
+        """Raccoglie informazioni sulla memoria"""
+        info = {}
+        
+        # /proc/meminfo
+        output = self._run_command("cat /proc/meminfo 2>/dev/null")
+        if output:
+            for line in output.split('\n'):
+                if line.startswith("MemTotal:"):
+                    info["total_kb"] = int(line.split()[1])
+                elif line.startswith("MemAvailable:"):
+                    info["available_kb"] = int(line.split()[1])
+                elif line.startswith("SwapTotal:"):
+                    info["swap_total_kb"] = int(line.split()[1])
+                elif line.startswith("SwapFree:"):
+                    info["swap_free_kb"] = int(line.split()[1])
+        
+        # ECC info
+        output = self._run_command("edac-util -s 2>/dev/null")
+        if output and "No errors" not in output:
+            info["ecc_status"] = output.strip()
+        else:
+            info["ecc_status"] = "ok" if output else "not_available"
+        
+        return info
+    
+    def _get_raid_info(self) -> List[Dict[str, Any]]:
+        """Raccoglie informazioni su RAID mdadm e ZFS"""
+        raid_info = []
+        
+        # mdadm
+        output = self._run_command("cat /proc/mdstat 2>/dev/null")
+        if output and "md" in output:
+            for line in output.split('\n'):
+                if line.startswith('md'):
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        raid_info.append({
+                            "type": "mdadm",
+                            "device": parts[0].rstrip(':'),
+                            "status": "active" if "active" in line else "inactive",
+                            "level": parts[3] if len(parts) > 3 else "unknown"
+                        })
+        
+        # ZFS
+        output = self._run_command("zpool list -H -o name,health,size,alloc,free,cap 2>/dev/null")
+        if output:
+            for line in output.strip().split('\n'):
+                parts = line.split('\t')
+                if len(parts) >= 6:
+                    raid_info.append({
+                        "type": "zfs",
+                        "device": parts[0],
+                        "status": parts[1].lower(),
+                        "size": parts[2],
+                        "used": parts[3],
+                        "free": parts[4],
+                        "capacity": parts[5]
+                    })
+        
+        return raid_info

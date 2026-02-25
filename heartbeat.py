@@ -210,6 +210,127 @@ def send_heartbeat_gelf(config: Dict[str, Any], system_info: Dict[str, Any]) -> 
         return False
 
 
+def send_hardware_status_gelf(config: Dict[str, Any], hw_status: Dict[str, Any]) -> bool:
+    """Invia stato hardware in formato GELF al server Syslog porta 8514"""
+    import time
+    
+    syslog_config = config.get("syslog", {})
+    
+    if not syslog_config.get("enabled", False):
+        return False
+    
+    host = syslog_config.get("host", "")
+    port = syslog_config.get("port", 8514)
+    protocol = syslog_config.get("protocol", "tcp").lower()
+    
+    if not host:
+        return False
+    
+    hostname = socket.gethostname()
+    codcli = config.get("codcli", "")
+    nomecliente = config.get("nomecliente", "")
+    
+    summary = hw_status.get("summary", {})
+    overall_status = summary.get("overall_status", "ok")
+    
+    # Livello severità
+    if overall_status == "critical":
+        level = 3  # ERROR
+    elif overall_status == "warning":
+        level = 4  # WARNING
+    else:
+        level = 6  # INFO
+    
+    # Costruisci messaggio GELF
+    gelf_msg = {
+        "version": "1.1",
+        "host": hostname,
+        "short_message": f"HARDWARE_STATUS: {overall_status} - {hostname}",
+        "full_message": f"Hardware check su {hostname}: {summary.get('total_alerts', 0)} alert ({summary.get('critical', 0)} critical, {summary.get('warning', 0)} warning)",
+        "timestamp": time.time(),
+        "level": level,
+        "_app": "proxreporter",
+        "_module": "hardware_monitor",
+        "_app_version": __version__,
+        "_message_type": "HARDWARE_STATUS",
+        "_client_code": codcli,
+        "_client_name": nomecliente,
+        "_hostname": hostname,
+        "_status": overall_status,
+        "_total_alerts": summary.get("total_alerts", 0),
+        "_critical_count": summary.get("critical", 0),
+        "_warning_count": summary.get("warning", 0),
+        "_disk_alerts": summary.get("by_component", {}).get("disk", 0),
+        "_memory_alerts": summary.get("by_component", {}).get("memory", 0),
+        "_raid_alerts": summary.get("by_component", {}).get("raid", 0),
+        "_temperature_alerts": summary.get("by_component", {}).get("temperature", 0),
+        "_kernel_alerts": summary.get("by_component", {}).get("kernel", 0),
+    }
+    
+    # Aggiungi info dischi (max 5)
+    disks = hw_status.get("disks", [])
+    gelf_msg["_disk_count"] = len(disks)
+    for i, disk in enumerate(disks[:5]):
+        prefix = f"_disk_{i}"
+        gelf_msg[f"{prefix}_device"] = disk.get("device", "")
+        gelf_msg[f"{prefix}_model"] = disk.get("model", "")
+        gelf_msg[f"{prefix}_smart"] = disk.get("smart_status", "")
+        if "temperature" in disk:
+            gelf_msg[f"{prefix}_temp"] = disk.get("temperature", 0)
+        if "reallocated_sectors" in disk:
+            gelf_msg[f"{prefix}_reallocated"] = disk.get("reallocated_sectors", 0)
+    
+    # Aggiungi temperature (max 10)
+    temps = hw_status.get("temperatures", [])
+    gelf_msg["_temp_sensor_count"] = len(temps)
+    max_temp = 0
+    for i, temp in enumerate(temps[:10]):
+        t = temp.get("temperature", 0)
+        if t > max_temp:
+            max_temp = t
+        prefix = f"_temp_{i}"
+        gelf_msg[f"{prefix}_chip"] = temp.get("chip", "")
+        gelf_msg[f"{prefix}_sensor"] = temp.get("sensor", "")
+        gelf_msg[f"{prefix}_value"] = t
+    gelf_msg["_temp_max"] = max_temp
+    
+    # Aggiungi info memoria
+    mem = hw_status.get("memory", {})
+    if mem:
+        gelf_msg["_mem_total_gb"] = round(mem.get("total_kb", 0) / 1024 / 1024, 2)
+        gelf_msg["_mem_available_gb"] = round(mem.get("available_kb", 0) / 1024 / 1024, 2)
+        gelf_msg["_mem_ecc_status"] = mem.get("ecc_status", "unknown")
+    
+    # Aggiungi info RAID (max 5)
+    raids = hw_status.get("raid", [])
+    gelf_msg["_raid_count"] = len(raids)
+    for i, raid in enumerate(raids[:5]):
+        prefix = f"_raid_{i}"
+        gelf_msg[f"{prefix}_type"] = raid.get("type", "")
+        gelf_msg[f"{prefix}_device"] = raid.get("device", "")
+        gelf_msg[f"{prefix}_status"] = raid.get("status", "")
+    
+    message = (json.dumps(gelf_msg) + '\0').encode('utf-8')
+    
+    try:
+        if protocol == "tcp":
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(10)
+            sock.connect((host, port))
+            sock.sendall(message)
+            sock.close()
+        else:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(message, (host, port))
+            sock.close()
+        
+        logger.info(f"✓ Hardware status inviato a {host}:{port}")
+        return True
+    except Exception as e:
+        logger.error(f"✗ Errore invio hardware status: {e}")
+        return False
+
+
 def check_and_update() -> Optional[str]:
     """
     Verifica se è disponibile una nuova versione e aggiorna se necessario.
@@ -363,6 +484,23 @@ def main():
     
     # Invia heartbeat
     success = send_heartbeat_gelf(config, system_info)
+    
+    # Esegui controllo hardware se abilitato
+    hw_config = config.get("hardware_monitoring", {})
+    if hw_config.get("enabled", True):  # Abilitato di default
+        try:
+            from hardware_monitor import HardwareMonitor
+            logger.info("→ Controllo hardware...")
+            hw_monitor = HardwareMonitor(config)
+            hw_monitor.run_all_checks()
+            hw_status = hw_monitor.get_full_status()
+            
+            # Invia riepilogo hardware a syslog porta 8514
+            send_hardware_status_gelf(config, hw_status)
+        except ImportError:
+            logger.debug("Hardware Monitor non disponibile")
+        except Exception as e:
+            logger.warning(f"Errore Hardware Monitor: {e}")
     
     # Esegui PVE Monitor se abilitato (invia stato backup/storage/servizi)
     pve_config = config.get("pve_monitor", {})
