@@ -60,7 +60,8 @@ class PVESyslogSender:
         self.port = pve_config.get("syslog_port", 4514)
         self.protocol = syslog_config.get("protocol", "tcp").lower()
         self.facility = self.FACILITY_MAP.get(syslog_config.get("facility", "local0"), 16)
-        self.format = syslog_config.get("format", "rfc5424").lower()
+        # PVE Monitor può avere un formato diverso (default: json per compatibilità con versione funzionante)
+        self.format = pve_config.get("syslog_format", syslog_config.get("format", "json")).lower()
         self.app_name = "pve-monitor"  # App name specifico per PVE Monitor
         
         # Client info per i messaggi
@@ -98,8 +99,15 @@ class PVESyslogSender:
         }
 
         if self.format == "gelf":
+            # Formato GELF per Graylog - struttura piatta
             syslog_msg = self._build_gelf_message(message_type, payload, severity)
+        elif self.format == "json" or self.format == "raw":
+            # Formato JSON raw - come usato dalla versione funzionante
+            # Invia: MESSAGE_TYPE - {json payload}
+            json_payload = json.dumps(payload, separators=(",", ":"), default=str)
+            syslog_msg = f"{message_type} - {json_payload}"
         else:
+            # Formato RFC 5424 standard
             json_payload = json.dumps(payload, separators=(",", ":"), default=str)
             syslog_msg = f"<{priority}>1 {timestamp} {self.hostname} {self.app_name} {os.getpid()} {message_type} - {json_payload}"
 
