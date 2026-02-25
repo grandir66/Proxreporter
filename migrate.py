@@ -404,6 +404,51 @@ def create_config_from_cron_params(cron_params: Dict[str, Any]) -> Dict[str, Any
     return config
 
 
+def prompt_missing_config(config: Dict[str, Any], result: MigrationResult) -> Dict[str, Any]:
+    """
+    Richiede interattivamente i parametri mancanti.
+    """
+    print("\n" + "=" * 60)
+    print("CONFIGURAZIONE PARAMETRI MANCANTI")
+    print("=" * 60)
+    
+    # Codcli
+    codcli = config.get("codcli", "") or config.get("client", {}).get("codcli", "")
+    if not codcli:
+        codcli = input("\nCodice cliente (codcli): ").strip()
+        config["codcli"] = codcli
+        config.setdefault("client", {})["codcli"] = codcli
+        result.actions.append(f"Codcli inserito: {codcli}")
+    
+    # Nomecliente
+    nomecliente = config.get("nomecliente", "") or config.get("client", {}).get("nomecliente", "")
+    if not nomecliente:
+        nomecliente = input("Nome cliente (nomecliente): ").strip()
+        config["nomecliente"] = nomecliente
+        config.setdefault("client", {})["nomecliente"] = nomecliente
+        result.actions.append(f"Nomecliente inserito: {nomecliente}")
+    
+    # Password SFTP
+    sftp_password = config.get("sftp", {}).get("password", "")
+    if not sftp_password:
+        print("\n--- Configurazione SFTP ---")
+        print(f"Server: sftp.domarc.it:11122")
+        print(f"Username: proxmox")
+        import getpass
+        sftp_password = getpass.getpass("Password SFTP: ").strip()
+        if sftp_password:
+            config.setdefault("sftp", {})["password"] = sftp_password
+            config["sftp"]["enabled"] = True
+            result.actions.append("Password SFTP configurata")
+        else:
+            print("  ⚠ Password non inserita - SFTP sarà disabilitato")
+            config.setdefault("sftp", {})["enabled"] = False
+    
+    print("=" * 60 + "\n")
+    
+    return config
+
+
 def backup_old_installation(old_path: Path, result: MigrationResult) -> Optional[Path]:
     """Crea backup della vecchia installazione"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -802,6 +847,15 @@ def migrate(dry_run: bool = False, force: bool = False) -> MigrationResult:
         logger.info("→ Creazione configurazione da parametri cron...")
         migrated_config = create_config_from_cron_params(cron_config)
         result.actions.append(f"Configurazione creata da cron: codcli={cron_config.get('codcli')}")
+    
+    # Se ancora non abbiamo config, crea una vuota
+    if not migrated_config:
+        logger.info("→ Creazione nuova configurazione...")
+        migrated_config = create_config_from_cron_params({})
+    
+    # 5.5. Richiedi parametri mancanti (interattivo)
+    if not dry_run:
+        migrated_config = prompt_missing_config(migrated_config, result)
     
     # 6. Installa nuova versione
     logger.info("→ Installazione nuova versione...")
