@@ -60,8 +60,9 @@ class PVESyslogSender:
         self.port = pve_config.get("syslog_port", 4514)
         self.protocol = syslog_config.get("protocol", "tcp").lower()
         self.facility = self.FACILITY_MAP.get(syslog_config.get("facility", "local0"), 16)
-        # PVE Monitor può avere un formato diverso (default: json per compatibilità con versione funzionante)
-        self.format = pve_config.get("syslog_format", syslog_config.get("format", "json")).lower()
+        # PVE Monitor usa SEMPRE formato json su porta 4514 (compatibilità con versione funzionante)
+        # Il formato GELF viene inviato come copia separata alla porta 8514
+        self.format = pve_config.get("syslog_format", "json").lower()
         self.app_name = "pve-monitor"  # App name specifico per PVE Monitor
         
         # Porta principale per copia GELF (8514)
