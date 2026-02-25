@@ -157,6 +157,7 @@ class SyslogSender:
             "timestamp": time.time(),
             "level": severity.value,
             "_app": self.app_name,
+            "_module": "alert_manager",
             "_app_version": __version__,
             "_facility": "proxreporter",
         }

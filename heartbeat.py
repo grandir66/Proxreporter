@@ -175,6 +175,7 @@ def send_heartbeat_gelf(config: Dict[str, Any], system_info: Dict[str, Any]) -> 
         "timestamp": time.time(),
         "level": 6,  # INFO
         "_app": "proxreporter",
+        "_module": "heartbeat",
         "_app_version": __version__,
         "_message_type": "HEARTBEAT",
         "_client_code": codcli,

@@ -145,6 +145,7 @@ class PVESyslogSender:
             "timestamp": time.time(),
             "level": severity,
             "_app": self.app_name,
+            "_module": "pve_monitor",
             "_app_version": __version__,
             "_message_type": message_type,
             "_client_code": self.client.get("code", ""),
@@ -369,7 +370,102 @@ class PVEMonitor:
             results["checks"]["service_status"] = self._collect_service_status(test_mode)
         
         logger.info("  ✓ PVE Monitor completato")
+        
+        # Invia riepilogo anche su porta 8514 (Proxreporter alerts)
+        self._send_summary_to_main_syslog(results, test_mode)
+        
         return results
+    
+    def _send_summary_to_main_syslog(self, results: Dict, test_mode: bool) -> bool:
+        """
+        Invia un riepilogo dell'esecuzione PVE Monitor sulla porta 8514 (syslog principale).
+        Questo permette di avere tutti i messaggi di sistema su un unico stream.
+        """
+        import time
+        
+        syslog_config = self.config.get("syslog", {})
+        if not syslog_config.get("enabled", False):
+            return False
+        
+        host = syslog_config.get("host", "")
+        port = syslog_config.get("port", 8514)  # Porta principale Proxreporter
+        
+        if not host:
+            return False
+        
+        # Costruisci riepilogo
+        checks = results.get("checks", {})
+        
+        # Conta problemi
+        backup_coverage = checks.get("backup_coverage", {})
+        not_covered = backup_coverage.get("not_covered", 0) if isinstance(backup_coverage, dict) else 0
+        
+        service_status = checks.get("service_status", {})
+        services_failed = service_status.get("failed", 0) if isinstance(service_status, dict) else 0
+        
+        backup_results = checks.get("backup_results", {})
+        backup_jobs = backup_results.get("jobs", 0) if isinstance(backup_results, dict) else 0
+        backup_tasks = backup_results.get("tasks", 0) if isinstance(backup_results, dict) else 0
+        
+        # Determina severità
+        if services_failed > 0:
+            status = "failed"
+            level = 3  # ERROR
+        elif not_covered > 0:
+            status = "warning"
+            level = 4  # WARNING
+        else:
+            status = "success"
+            level = 6  # INFO
+        
+        # Messaggio GELF
+        gelf_msg = {
+            "version": "1.1",
+            "host": self.node,
+            "short_message": f"PVE_MONITOR_SUMMARY: {status} - {self.node}",
+            "full_message": f"PVE Monitor completato su {self.node}: {backup_tasks} task backup, {not_covered} VM senza backup, {services_failed} servizi failed",
+            "timestamp": time.time(),
+            "level": level,
+            "_app": "proxreporter",
+            "_module": "pve_monitor",
+            "_app_version": __version__,
+            "_message_type": "PVE_MONITOR_SUMMARY",
+            "_client_code": self.client_info.get("codcli", ""),
+            "_client_name": self.client_info.get("nomecliente", ""),
+            "_hostname": self.node,
+            "_pve_version": results.get("pve_version", ""),
+            "_status": status,
+            "_backup_tasks": backup_tasks,
+            "_backup_jobs": backup_jobs,
+            "_vms_not_covered": not_covered,
+            "_services_failed": services_failed,
+        }
+        
+        # Aggiungi info nodo se disponibile
+        node_status = checks.get("node_status", {})
+        if isinstance(node_status, dict) and "data" in node_status:
+            node_data = node_status["data"]
+            gelf_msg["_cpu_percent"] = node_data.get("cpu_percent", 0)
+            gelf_msg["_memory_used_percent"] = node_data.get("memory_used_percent", 0)
+            gelf_msg["_uptime_hours"] = node_data.get("uptime_hours", 0)
+        
+        message = (json.dumps(gelf_msg) + '\0').encode('utf-8')
+        
+        if test_mode:
+            logger.info(f"\n=== SUMMARY to 8514 ({len(message)} bytes) ===\n{message[:500]}...\n")
+            return True
+        
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(10)
+            sock.connect((host, port))
+            sock.sendall(message)
+            sock.close()
+            logger.info(f"  ✓ Riepilogo PVE inviato a {host}:{port}")
+            return True
+        except Exception as e:
+            logger.debug(f"Errore invio riepilogo PVE: {e}")
+            return False
 
     def _collect_node_status(self, test_mode: bool) -> Dict:
         """Raccoglie e invia stato del nodo PVE"""
