@@ -222,6 +222,16 @@ def load_old_config(path: Path) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _sanitize_name(val: str) -> str:
+    """Sostituisce spazi con underscore per evitare problemi di quoting."""
+    import re
+    if not val:
+        return val
+    s = val.strip().replace(" ", "_")
+    s = re.sub(r'_+', '_', s)
+    return s.strip("_")
+
+
 def migrate_config(old_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Migra configurazione vecchia al nuovo formato.
@@ -229,20 +239,26 @@ def migrate_config(old_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     new_config = {}
     
-    # Copia campi top-level standard
+    # Copia campi top-level standard (sanitizza codcli e nomecliente)
     direct_copy = ["codcli", "nomecliente", "server_identifier"]
     for key in direct_copy:
         if key in old_config:
-            new_config[key] = old_config[key]
+            if key in ("codcli", "nomecliente"):
+                new_config[key] = _sanitize_name(old_config[key])
+            else:
+                new_config[key] = old_config[key]
     
     # Migra sezione client (vecchio formato -> nuovo)
     if "client" in old_config:
         new_config["client"] = old_config["client"]
+        for k in ("codcli", "nomecliente"):
+            if k in new_config["client"] and new_config["client"][k]:
+                new_config["client"][k] = _sanitize_name(new_config["client"][k])
     else:
         # Costruisci da campi legacy
         new_config["client"] = {
-            "codcli": old_config.get("codcli", old_config.get("cod_cliente", "")),
-            "nomecliente": old_config.get("nomecliente", old_config.get("nome_cliente", "")),
+            "codcli": _sanitize_name(old_config.get("codcli", old_config.get("cod_cliente", ""))),
+            "nomecliente": _sanitize_name(old_config.get("nomecliente", old_config.get("nome_cliente", ""))),
             "server_identifier": old_config.get("server_identifier", old_config.get("hostname", ""))
         }
     
@@ -345,11 +361,11 @@ def create_config_from_cron_params(cron_params: Dict[str, Any]) -> Dict[str, Any
     Usa valori di default per SFTP e altri parametri.
     """
     config = {
-        "codcli": cron_params.get("codcli", ""),
-        "nomecliente": cron_params.get("nomecliente", ""),
+        "codcli": _sanitize_name(cron_params.get("codcli", "")),
+        "nomecliente": _sanitize_name(cron_params.get("nomecliente", "")),
         "client": {
-            "codcli": cron_params.get("codcli", ""),
-            "nomecliente": cron_params.get("nomecliente", ""),
+            "codcli": _sanitize_name(cron_params.get("codcli", "")),
+            "nomecliente": _sanitize_name(cron_params.get("nomecliente", "")),
             "server_identifier": ""
         },
         "proxmox": {
@@ -415,18 +431,26 @@ def prompt_missing_config(config: Dict[str, Any], result: MigrationResult) -> Di
     # Codcli
     codcli = config.get("codcli", "") or config.get("client", {}).get("codcli", "")
     if not codcli:
-        codcli = input("\nCodice cliente (codcli): ").strip()
+        codcli = _sanitize_name(input("\nCodice cliente (codcli): ").strip())
         config["codcli"] = codcli
         config.setdefault("client", {})["codcli"] = codcli
         result.actions.append(f"Codcli inserito: {codcli}")
+    else:
+        codcli = _sanitize_name(codcli)
+        config["codcli"] = codcli
+        config.setdefault("client", {})["codcli"] = codcli
     
     # Nomecliente
     nomecliente = config.get("nomecliente", "") or config.get("client", {}).get("nomecliente", "")
     if not nomecliente:
-        nomecliente = input("Nome cliente (nomecliente): ").strip()
+        nomecliente = _sanitize_name(input("Nome cliente (nomecliente): ").strip())
         config["nomecliente"] = nomecliente
         config.setdefault("client", {})["nomecliente"] = nomecliente
         result.actions.append(f"Nomecliente inserito: {nomecliente}")
+    else:
+        nomecliente = _sanitize_name(nomecliente)
+        config["nomecliente"] = nomecliente
+        config.setdefault("client", {})["nomecliente"] = nomecliente
     
     # Password SFTP
     sftp_password = config.get("sftp", {}).get("password", "")

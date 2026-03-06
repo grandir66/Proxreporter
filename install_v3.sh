@@ -29,34 +29,23 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# Check requirements
-echo -e "${YELLOW}→ Checking dependencies...${NC}"
-MISSING=""
-
-# Check git
-if ! command -v git &> /dev/null; then
-    MISSING="$MISSING git"
-fi
-
-# Check python3
-if ! command -v python3 &> /dev/null; then
-    MISSING="$MISSING python3"
-fi
-
-# Check pip
-if ! command -v pip3 &> /dev/null; then
-    MISSING="$MISSING python3-pip"
-fi
-
-if [ ! -z "$MISSING" ]; then
-    echo -e "${YELLOW}  Installing missing dependencies:${NC} $MISSING"
-    apt-get update -qq && apt-get install -y $MISSING git python3 python3-pip python3-venv || { 
+# Install ALL system dependencies upfront (Proxmox minimal installs may lack python3/pip3)
+echo -e "${YELLOW}→ Installing system dependencies...${NC}"
+apt-get update -qq || { echo -e "${RED}✗ apt-get update failed.${NC}"; exit 1; }
+apt-get install -y -qq git python3 python3-pip python3-venv python3-cryptography lshw cron 2>/dev/null || \
+    apt-get install -y git python3 python3-pip python3-venv lshw cron || {
         echo -e "${RED}✗ Dependency installation failed.${NC}"
         exit 1
     }
-fi
 
-echo -e "${GREEN}✓ Dependencies OK${NC}"
+# Verify critical dependencies
+for cmd in git python3 pip3; do
+    if ! command -v "$cmd" &> /dev/null; then
+        echo -e "${RED}✗ Required command '$cmd' not found after installation.${NC}"
+        exit 1
+    fi
+done
+echo -e "${GREEN}✓ System dependencies OK${NC}"
 
 # Clone/Update Repo
 echo ""
@@ -107,9 +96,13 @@ fi
 # Install Python dependencies
 echo ""
 echo -e "${YELLOW}→ Installing Python dependencies...${NC}"
-pip3 install -q paramiko cryptography 2>/dev/null || pip3 install paramiko cryptography
+pip3 install -q paramiko cryptography jinja2 2>/dev/null || \
+    pip3 install paramiko cryptography jinja2 || {
+        echo -e "${YELLOW}⚠ pip3 install failed, trying apt fallback...${NC}"
+        apt-get install -y -qq python3-paramiko python3-cryptography python3-jinja2 2>/dev/null || true
+    }
 
-echo -e "${GREEN}✓ Dependencies installed${NC}"
+echo -e "${GREEN}✓ Python dependencies installed${NC}"
 
 # Set executable permissions
 echo ""

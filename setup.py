@@ -77,6 +77,14 @@ def prompt_password(label: str, default: Optional[str] = None, required: bool = 
         print("Valore obbligatorio, riprova.")
 
 
+def sanitize_name(value: str) -> str:
+    """Sostituisce spazi con underscore per evitare problemi con apici/quoting nei config e cron."""
+    import re
+    sanitized = value.strip().replace(" ", "_")
+    sanitized = re.sub(r'_+', '_', sanitized)
+    return sanitized.strip("_")
+
+
 def prompt_yes_no(label: str, default: bool = False) -> bool:
     mapping = {"y": True, "yes": True, "n": False, "no": False}
     default_char = "y" if default else "n"
@@ -226,8 +234,8 @@ def setup_default(script_path: str) -> str:
     default_output = "/var/log/proxreporter"
     
     # Chiedi solo le info essenziali
-    codcli = prompt("Codice cliente (codcli)")
-    nomecliente = prompt("Nome cliente (nomecliente)")
+    codcli = sanitize_name(prompt("Codice cliente (codcli)"))
+    nomecliente = sanitize_name(prompt("Nome cliente (nomecliente)"))
     
     print("\n→ Configurazione automatica:")
     print(f"  • Esecuzione: locale")
@@ -266,8 +274,8 @@ def setup_interactive(script_path: str) -> Tuple[str, str]:
     default_output = str(Path("/var/log/proxreporter"))
     output_dir = prompt("Directory output dei report", default=default_output)
 
-    codcli = prompt("Codice cliente (codcli)")
-    nomecliente = prompt("Nome cliente (nomecliente)")
+    codcli = sanitize_name(prompt("Codice cliente (codcli)"))
+    nomecliente = sanitize_name(prompt("Nome cliente (nomecliente)"))
     
     # SFTP Configuration
     print("\n[Configurazione SFTP]")

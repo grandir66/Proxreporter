@@ -19,32 +19,23 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# Check requirements
-echo "→ Checking dependencies..."
-MISSING=""
+# Install ALL system dependencies upfront (Proxmox minimal installs may lack python3)
+echo "→ Installing system dependencies..."
+apt-get update -qq || { echo -e "${RED}apt-get update failed.${NC}"; exit 1; }
+apt-get install -y -qq git python3 python3-pip python3-venv python3-paramiko python3-jinja2 python3-cryptography lshw cron 2>/dev/null || \
+    apt-get install -y git python3 python3-pip python3-venv lshw cron || {
+        echo -e "${RED}Dependency installation failed.${NC}"
+        exit 1
+    }
 
-# Check git
-if ! command -v git &> /dev/null; then
-    MISSING="$MISSING git"
-fi
-
-# Check python3
-if ! command -v python3 &> /dev/null; then
-    MISSING="$MISSING python3"
-fi
-
-# Check python3-venv (module check)
-if command -v python3 &> /dev/null; then
-    if ! python3 -c "import venv" &> /dev/null; then
-        MISSING="$MISSING python3-venv"
+# Verify critical dependencies
+for cmd in git python3; do
+    if ! command -v "$cmd" &> /dev/null; then
+        echo -e "${RED}✗ Required command '$cmd' not found after installation.${NC}"
+        exit 1
     fi
-fi
-
-if [ ! -z "$MISSING" ]; then
-    echo -e "${RED}Missing dependencies:${NC} $MISSING"
-    echo "Attempting to install..."
-    apt-get update && apt-get install -y git python3 python3-pip python3-venv || { echo -e "${RED}Installation failed.${NC}"; exit 1; }
-fi
+done
+echo -e "${GREEN}✓ Dependencies OK${NC}"
 
 # Clone/Update Repo
 if [ -e "$INSTALL_DIR" ]; then

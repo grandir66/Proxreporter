@@ -5,7 +5,7 @@ A modular, secure tool for extracting Proxmox configuration data,
 generating reports, and uploading backups via SFTP.
 """
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 __author__ = "Proxreporter Team"
 
 from .exceptions import (

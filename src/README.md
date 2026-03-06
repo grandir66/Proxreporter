@@ -82,8 +82,8 @@ proxreporter --config config.json --local
 
 ```
 --config, -c       Configuration file path (default: config.json)
---codcli           Client code (overrides config.json)
---nomecliente      Client name (overrides config.json)
+--codcli           Client code (overrides config.json, spaces replaced with _)
+--nomecliente      Client name (overrides config.json, spaces replaced with _)
 --local, -l        Run locally on Proxmox host
 --host, -H         Remote Proxmox host
 --username, -u     Proxmox API username (default: root@pam)
@@ -103,7 +103,7 @@ Configuration is loaded from `config.json`:
 {
     "client": {
         "codcli": "CLI001",
-        "nomecliente": "Client Name",
+        "nomecliente": "Client_Name",
         "server_identifier": "pve-host"
     },
     "sftp": {

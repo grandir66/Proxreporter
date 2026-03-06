@@ -50,10 +50,11 @@ wget -qO- https://raw.githubusercontent.com/grandir66/Proxreporter/main/install.
 ```
 
 **What the installer does:**
-1. Checks dependencies (`git`, `python3`, `python3-venv`)
-2. Clones repository to `/opt/proxreport`
-3. Preserves existing `config.json` and `.secret.key` during updates
-4. Launches interactive `setup.py` wizard
+1. Installs all system dependencies upfront (`git`, `python3`, `python3-pip`, `python3-venv`, `python3-paramiko`, `python3-jinja2`, `python3-cryptography`, `lshw`, `cron`)
+2. Verifies critical commands are available before proceeding
+3. Clones repository to `/opt/proxreport`
+4. Preserves existing `config.json` and `.secret.key` during updates
+5. Launches interactive `setup.py` wizard
 
 ---
 
@@ -171,8 +172,8 @@ During the installation, the interactive wizard will ask you to configure the sy
 ### 1. General Settings
 *   **Output Directory**: The local folder where CSV reports, logs, and backup archives will be stored.
     *   *Default*: `/var/log/proxreporter` (Recommended)
-*   **Client Code (codcli)**: A short, unique identifier for the customer or site (e.g., `CUST01`, `ACMECORP`). This code is used in the report filenames.
-*   **Client Name**: The full human-readable name of the customer (e.g., `Acme Corp International`).
+*   **Client Code (codcli)**: A short, unique identifier for the customer or site (e.g., `CUST01`, `ACMECORP`). This code is used in the report filenames. Spaces are automatically replaced with underscores.
+*   **Client Name**: The full human-readable name of the customer (e.g., `Acme_Corp_International`). Spaces are automatically replaced with underscores to prevent quoting issues in cron jobs and configuration files.
 
 ### 2. SFTP Configuration (Uploads)
 *   **SFTP Password**: **(Required)** You must enter the password for the centralized SFTP server (`sftp.domarc.it`).
@@ -212,7 +213,7 @@ You can manually edit this file to change passwords or settings without reinstal
     },
     "client": {
         "codcli": "CL001",
-        "nomecliente": "Acme Corp",
+        "nomecliente": "Acme_Corp",
         "server_identifier": "local"
     },
     "sftp": {
