@@ -21,10 +21,13 @@ fi
 
 # Install ALL system dependencies upfront (Proxmox minimal installs may lack python3)
 echo "→ Installing system dependencies..."
-apt-get update -qq || { echo -e "${RED}apt-get update failed.${NC}"; exit 1; }
+# apt-get update may fail partially on Proxmox without enterprise subscription - this is OK
+apt-get update -qq 2>/dev/null || echo -e "${YELLOW}⚠ apt-get update had errors (enterprise repos?) - continuing anyway${NC}"
+
 apt-get install -y -qq git python3 python3-pip python3-venv python3-paramiko python3-jinja2 python3-cryptography lshw cron 2>/dev/null || \
-    apt-get install -y git python3 python3-pip python3-venv lshw cron || {
-        echo -e "${RED}Dependency installation failed.${NC}"
+    apt-get install -y git python3 python3-pip python3-venv lshw cron 2>/dev/null || {
+        echo -e "${RED}✗ Dependency installation failed.${NC}"
+        echo -e "${YELLOW}  Check your apt sources and try: apt-get update && apt-get install -y git python3 python3-pip${NC}"
         exit 1
     }
 

@@ -78,11 +78,17 @@ def prompt_password(label: str, default: Optional[str] = None, required: bool = 
 
 
 def sanitize_name(value: str) -> str:
-    """Sostituisce spazi con underscore per evitare problemi con apici/quoting nei config e cron."""
+    """Rimuove caratteri problematici e sostituisce spazi con underscore.
+    Previene errori di quoting in cron, config JSON, shell e nomi file."""
     import re
-    sanitized = value.strip().replace(" ", "_")
+    sanitized = value.strip()
+    sanitized = sanitized.replace(" ", "_")
+    sanitized = re.sub(r'[\'\"\\`$&;|<>(){}!#~^]', '', sanitized)
     sanitized = re.sub(r'_+', '_', sanitized)
-    return sanitized.strip("_")
+    sanitized = sanitized.strip("_.")
+    if not sanitized:
+        print("⚠ Il nome inserito contiene solo caratteri non validi. Riprova.")
+    return sanitized
 
 
 def prompt_yes_no(label: str, default: bool = False) -> bool:
@@ -139,17 +145,32 @@ def ensure_dependencies() -> None:
         return
 
     print("→ Installazione pacchetti richiesti: " + ", ".join(required_packages))
-    subprocess.run([apt_path, "update"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # apt-get update puo fallire su Proxmox senza licenza enterprise - non fatale
+    subprocess.run([apt_path, "update", "-qq"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run([apt_path, "install", "-y", *required_packages], check=False)
 
-    # Ritenta import paramiko per feedback
-    try:
-        importlib.import_module("paramiko")
-    except ModuleNotFoundError:
-        print(
-            "⚠ La libreria paramiko non è stata installata correttamente. "
-            "Installare manualmente con: sudo apt install python3-paramiko"
-        )
+    # Fallback pip3 per librerie Python se apt non le ha installate
+    pip_path = shutil.which("pip3")
+    pip_fallback_map = {"python3-paramiko": "paramiko", "python3-jinja2": "jinja2", "python3-cryptography": "cryptography"}
+    for apt_pkg in required_packages:
+        if apt_pkg in pip_fallback_map:
+            try:
+                importlib.import_module(pip_fallback_map[apt_pkg].replace("-", "_"))
+            except ModuleNotFoundError:
+                if pip_path:
+                    print(f"  → Tentativo pip3 per {pip_fallback_map[apt_pkg]}...")
+                    subprocess.run([pip_path, "install", "-q", pip_fallback_map[apt_pkg]], check=False)
+
+    # Verifica finale
+    for mod_name in ["paramiko", "jinja2"]:
+        try:
+            importlib.import_module(mod_name)
+        except ModuleNotFoundError:
+            apt_pkg = f"python3-{mod_name}"
+            print(
+                f"⚠ La libreria {mod_name} non è stata installata correttamente. "
+                f"Installare manualmente con: sudo apt install {apt_pkg} oppure pip3 install {mod_name}"
+            )
     
     # Avvia servizio cron se necessario
     if "cron" in required_packages:

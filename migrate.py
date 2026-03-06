@@ -64,8 +64,11 @@ OLD_CRON_PATTERNS = [
     "proxmox-report",
 ]
 
-# Dipendenze richieste
-REQUIRED_PACKAGES = ["git", "python3"]
+# Dipendenze richieste (comandi che devono essere disponibili)
+REQUIRED_PACKAGES = ["git", "python3", "pip3"]
+
+# Mappa comando -> pacchetto apt (quando il nome differisce)
+PACKAGE_MAP = {"pip3": "python3-pip"}
 
 
 class MigrationResult:
@@ -98,12 +101,11 @@ def run_command(cmd: str, check: bool = False) -> Tuple[int, str, str]:
 
 def check_and_install_dependencies(result: MigrationResult) -> bool:
     """
-    Verifica e installa le dipendenze necessarie (git, python3).
+    Verifica e installa le dipendenze necessarie (git, python3, pip3).
     Ritorna True se tutte le dipendenze sono disponibili.
     """
     missing = []
     
-    # Verifica quali pacchetti mancano
     for pkg in REQUIRED_PACKAGES:
         code, _, _ = run_command(f"which {pkg}")
         if code != 0:
@@ -131,30 +133,34 @@ def check_and_install_dependencies(result: MigrationResult) -> bool:
         result.errors.append("Nessun package manager supportato (apt/yum/dnf/apk)")
         return False
     
+    # apt-get update: non fatale (Proxmox enterprise repos possono fallire senza licenza)
+    if pkg_manager == "apt":
+        code, _, _ = run_command("apt-get update -qq 2>/dev/null")
+        if code != 0:
+            logger.warning("  ⚠ apt-get update con errori (repo enterprise?) - continuo comunque")
+    
     # Installa pacchetti mancanti
     for pkg in missing:
-        logger.info(f"  Installazione {pkg}...")
+        apt_pkg = PACKAGE_MAP.get(pkg, pkg)
+        logger.info(f"  Installazione {apt_pkg}...")
         
         if pkg_manager == "apt":
-            # Update repo se è il primo pacchetto
-            if pkg == missing[0]:
-                run_command("apt-get update -qq")
-            code, _, stderr = run_command(f"apt-get install -y -qq {pkg}")
+            code, _, stderr = run_command(f"apt-get install -y -qq {apt_pkg} 2>/dev/null")
         elif pkg_manager == "yum":
-            code, _, stderr = run_command(f"yum install -y -q {pkg}")
+            code, _, stderr = run_command(f"yum install -y -q {apt_pkg}")
         elif pkg_manager == "dnf":
-            code, _, stderr = run_command(f"dnf install -y -q {pkg}")
+            code, _, stderr = run_command(f"dnf install -y -q {apt_pkg}")
         elif pkg_manager == "apk":
-            code, _, stderr = run_command(f"apk add --quiet {pkg}")
+            code, _, stderr = run_command(f"apk add --quiet {apt_pkg}")
         else:
             code, stderr = 1, "Package manager non supportato"
         
         if code == 0:
-            result.actions.append(f"Installato: {pkg}")
-            logger.info(f"  ✓ {pkg} installato")
+            result.actions.append(f"Installato: {apt_pkg}")
+            logger.info(f"  ✓ {apt_pkg} installato")
         else:
-            result.errors.append(f"Errore installazione {pkg}: {stderr}")
-            logger.error(f"  ✗ Errore installazione {pkg}")
+            result.errors.append(f"Errore installazione {apt_pkg}: {stderr}")
+            logger.error(f"  ✗ Errore installazione {apt_pkg}")
             return False
     
     return True
@@ -223,13 +229,15 @@ def load_old_config(path: Path) -> Optional[Dict[str, Any]]:
 
 
 def _sanitize_name(val: str) -> str:
-    """Sostituisce spazi con underscore per evitare problemi di quoting."""
+    """Rimuove caratteri problematici e sostituisce spazi con underscore.
+    Previene errori di quoting in cron, config JSON, shell e nomi file."""
     import re
     if not val:
         return val
     s = val.strip().replace(" ", "_")
+    s = re.sub(r'[\'\"\\`$&;|<>(){}!#~^]', '', s)
     s = re.sub(r'_+', '_', s)
-    return s.strip("_")
+    return s.strip("_.")
 
 
 def migrate_config(old_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -665,40 +673,45 @@ def install_python_dependencies(install_dir: Path, result: MigrationResult) -> N
     """Installa le dipendenze Python richieste (jinja2, paramiko, cryptography)"""
     logger.info("→ Installazione dipendenze Python...")
     
-    # Lista dipendenze richieste
     dependencies = ["jinja2", "paramiko", "cryptography"]
     
-    # Verifica se requirements.txt esiste
-    requirements_file = install_dir / "requirements.txt"
-    
-    if requirements_file.exists():
-        # Installa da requirements.txt
-        code, stdout, stderr = run_command(f"pip3 install -q -r {requirements_file}")
+    # Strategia 1: prova apt (piu affidabile su Proxmox/Debian, non richiede pip)
+    apt_available = run_command("which apt-get")[0] == 0
+    if apt_available:
+        apt_pkgs = " ".join(f"python3-{dep}" for dep in dependencies)
+        code, _, _ = run_command(f"apt-get install -y -qq {apt_pkgs} 2>/dev/null")
         if code == 0:
-            result.actions.append("Dipendenze Python installate (da requirements.txt)")
-            logger.info("  ✓ Dipendenze Python installate")
-        else:
-            # Fallback: installa singolarmente
-            logger.warning(f"  Errore requirements.txt, provo installazione singola...")
-            for dep in dependencies:
-                code, _, _ = run_command(f"pip3 install -q {dep}")
-                if code == 0:
-                    logger.info(f"  ✓ {dep} installato")
-                else:
-                    result.warnings.append(f"Errore installazione {dep}")
-    else:
-        # Installa dipendenze singolarmente
-        for dep in dependencies:
-            code, _, stderr = run_command(f"pip3 install -q {dep}")
+            result.actions.append("Dipendenze Python installate (apt)")
+            logger.info("  ✓ Dipendenze Python installate via apt")
+            return
+        logger.warning("  apt install parziale, provo pip3...")
+    
+    # Strategia 2: prova pip3 con requirements.txt
+    requirements_file = install_dir / "requirements.txt"
+    pip_available = run_command("which pip3")[0] == 0
+    
+    if pip_available and requirements_file.exists():
+        code, _, _ = run_command(f"pip3 install -q -r {requirements_file}")
+        if code == 0:
+            result.actions.append("Dipendenze Python installate (pip3 requirements.txt)")
+            logger.info("  ✓ Dipendenze Python installate via pip3")
+            return
+    
+    # Strategia 3: installa singolarmente con pip3, fallback apt per ogni pacchetto
+    for dep in dependencies:
+        installed = False
+        if pip_available:
+            code, _, _ = run_command(f"pip3 install -q {dep}")
             if code == 0:
-                logger.info(f"  ✓ {dep} installato")
-            else:
-                # Prova con apt se pip fallisce
-                code2, _, _ = run_command(f"apt-get install -y -qq python3-{dep} 2>/dev/null")
-                if code2 == 0:
-                    logger.info(f"  ✓ python3-{dep} installato (apt)")
-                else:
-                    result.warnings.append(f"Impossibile installare {dep}: {stderr}")
+                logger.info(f"  ✓ {dep} installato (pip3)")
+                installed = True
+        if not installed and apt_available:
+            code, _, _ = run_command(f"apt-get install -y -qq python3-{dep} 2>/dev/null")
+            if code == 0:
+                logger.info(f"  ✓ python3-{dep} installato (apt)")
+                installed = True
+        if not installed:
+            result.warnings.append(f"Impossibile installare {dep}")
 
 
 def restore_config(install_dir: Path, config: Dict[str, Any], result: MigrationResult, dry_run: bool = False) -> bool:
@@ -862,12 +875,21 @@ def migrate(dry_run: bool = False, force: bool = False) -> MigrationResult:
                 logger.info("→ Preservo configurazione esistente...")
                 old_config = load_old_config(old_path)
                 if old_config:
+                    # Sanitizza codcli/nomecliente anche nelle config esistenti
+                    for section_key in (None, "client"):
+                        section = old_config if section_key is None else old_config.get(section_key, {})
+                        for field in ("codcli", "nomecliente"):
+                            if field in section and section[field]:
+                                section[field] = _sanitize_name(section[field])
                     result.actions.append(f"Configurazione preservata ({len(old_config)} parametri)")
             
             # Aggiorna repository
             if install_new_version(old_path, result, dry_run):
-                # Ripristina config se era stato sovrascritto
+                # Ripristina config (sanitizzata) se era stato sovrascritto
                 if old_config and not config_path.exists():
+                    restore_config(old_path, old_config, result, dry_run)
+                elif old_config and config_path.exists():
+                    # Riscrive la config sanitizzata anche se il file esiste
                     restore_config(old_path, old_config, result, dry_run)
                 
                 run_post_migration(old_path, result, dry_run)
