@@ -2852,7 +2852,22 @@ def write_host_csv(
 ) -> Optional[Path]:
     if not hosts:
         return None
-    
+
+    # Forza il refresh della cache subscription del nodo PRIMA di leggerla con
+    # 'pvesubscription get': senza questo, dopo un rinnovo/cambio contratto il
+    # nodo continuerebbe a riportare livello/scadenza licenza obsoleti finché
+    # Proxmox non aggiorna spontaneamente. Errori ignorati (nodi senza licenza).
+    try:
+        subprocess.run(
+            ["pvesubscription", "update", "--force"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        logger.info("  → [CSV] pvesubscription update --force eseguito (refresh cache licenza)")
+    except Exception as e:
+        logger.info(f"  ⚠ [CSV] pvesubscription update --force non riuscito: {e}")
+
     # IMPORTANTE: Estrai licenza per ogni host prima di finalizzare (se non già estratta)
     for host in hosts:
         hostname = host.get('hostname', 'unknown')

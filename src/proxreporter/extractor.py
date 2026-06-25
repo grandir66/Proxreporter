@@ -427,6 +427,12 @@ class ProxmoxExtractor:
         
         # Get subscription status
         try:
+            # Forza il refresh della cache subscription del nodo prima di leggerla,
+            # così un rinnovo/cambio contratto si riflette subito (errori ignorati).
+            self.run_command('pvesubscription update --force 2>/dev/null')
+        except Exception:
+            pass
+        try:
             output = self.run_command('pvesubscription get 2>/dev/null')
             if output:
                 for line in output.split('\n'):
