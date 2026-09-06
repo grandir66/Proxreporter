@@ -1,0 +1,103 @@
+{
+  "v": 1,
+  "id": "proxreporter-backup-field-normalization",
+  "rev": 1,
+  "name": "Proxreporter - Backup Field Normalization",
+  "summary": "Pipeline rules per normalizzare i campi dei job di backup tra Veeam e Proxmox PVE",
+  "description": "Crea alias bidirezionali per i campi con nomi diversi tra VEEAM_JOB_RESULT e PVE_BACKUP_RESULT, permettendo dashboard e ricerche unificate.",
+  "vendor": "Proxreporter",
+  "url": "",
+  "parameters": [],
+  "entities": [
+    {
+      "v": "1",
+      "type": {
+        "name": "pipeline_rule",
+        "version": "1"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "data": {
+        "title": {
+          "@type": "string",
+          "@value": "Normalize VEEAM backup result fields"
+        },
+        "description": {
+          "@type": "string",
+          "@value": "Aggiunge alias Proxmox-style ai campi Veeam per uniformare i nomi dei job di backup"
+        },
+        "source": {
+          "@type": "string",
+          "@value": "rule \"Normalize VEEAM backup result fields\"\nwhen\n  has_field(\"message_type\") AND to_string($message.message_type) == \"VEEAM_JOB_RESULT\"\nthen\n  set_field(\"job_start_time\", $message.start_time);\n  set_field(\"job_end_time\", $message.end_time);\n  set_field(\"job_duration_seconds\", $message.duration_seconds);\n  set_field(\"job_duration_minutes\", $message.duration_minutes);\n  set_field(\"vm_count\", $message.objects_total);\n  set_field(\"vms_success\", $message.objects_success);\n  set_field(\"vms_warning\", $message.objects_warning);\n  set_field(\"vms_failed\", $message.objects_failed);\n  set_field(\"backup_source\", \"veeam\");\nend"
+        }
+      },
+      "constraints": [
+        {
+          "type": "server-version",
+          "version": ">=5.0.0"
+        }
+      ]
+    },
+    {
+      "v": "1",
+      "type": {
+        "name": "pipeline_rule",
+        "version": "1"
+      },
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "data": {
+        "title": {
+          "@type": "string",
+          "@value": "Normalize PVE backup result fields"
+        },
+        "description": {
+          "@type": "string",
+          "@value": "Aggiunge alias Veeam-style ai campi Proxmox per uniformare i nomi dei job di backup"
+        },
+        "source": {
+          "@type": "string",
+          "@value": "rule \"Normalize PVE backup result fields\"\nwhen\n  has_field(\"message_type\") AND to_string($message.message_type) == \"PVE_BACKUP_RESULT\"\nthen\n  set_field(\"start_time\", $message.job_start_time);\n  set_field(\"end_time\", $message.job_end_time);\n  set_field(\"duration_seconds\", $message.job_duration_seconds);\n  set_field(\"duration_minutes\", $message.job_duration_minutes);\n  set_field(\"objects_total\", $message.vm_count);\n  set_field(\"objects_success\", $message.vms_success);\n  set_field(\"objects_warning\", $message.vms_warning);\n  set_field(\"objects_failed\", $message.vms_failed);\n  set_field(\"backup_source\", \"proxmox\");\nend"
+        }
+      },
+      "constraints": [
+        {
+          "type": "server-version",
+          "version": ">=5.0.0"
+        }
+      ]
+    },
+    {
+      "v": "1",
+      "type": {
+        "name": "pipeline",
+        "version": "1"
+      },
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "data": {
+        "title": {
+          "@type": "string",
+          "@value": "Backup Field Normalization"
+        },
+        "description": {
+          "@type": "string",
+          "@value": "Normalizza i campi dei job di backup tra sorgenti diverse (Veeam, Proxmox)"
+        },
+        "source": {
+          "@type": "string",
+          "@value": "pipeline \"Backup Field Normalization\"\nstage 0 match either\nrule \"Normalize VEEAM backup result fields\"\nrule \"Normalize PVE backup result fields\"\nend"
+        },
+        "connected_streams": [
+          {
+            "@type": "string",
+            "@value": "000000000000000000000001"
+          }
+        ]
+      },
+      "constraints": [
+        {
+          "type": "server-version",
+          "version": ">=5.0.0"
+        }
+      ]
+    }
+  ]
+}

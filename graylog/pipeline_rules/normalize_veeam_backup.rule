@@ -1,0 +1,19 @@
+rule "Normalize VEEAM backup result fields"
+when
+  has_field("message_type") AND to_string($message.message_type) == "VEEAM_JOB_RESULT"
+then
+  // Tempi job: alias Proxmox-style (con prefisso job_)
+  set_field("job_start_time", $message.start_time);
+  set_field("job_end_time", $message.end_time);
+  set_field("job_duration_seconds", $message.duration_seconds);
+  set_field("job_duration_minutes", $message.duration_minutes);
+
+  // Conteggi oggetti: alias Proxmox-style (vms_*)
+  set_field("vm_count", $message.objects_total);
+  set_field("vms_success", $message.objects_success);
+  set_field("vms_warning", $message.objects_warning);
+  set_field("vms_failed", $message.objects_failed);
+
+  // Sorgente backup per filtraggio unificato
+  set_field("backup_source", "veeam");
+end

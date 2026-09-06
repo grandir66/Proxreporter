@@ -1,0 +1,19 @@
+rule "Normalize PVE backup result fields"
+when
+  has_field("message_type") AND to_string($message.message_type) == "PVE_BACKUP_RESULT"
+then
+  // Tempi job: alias Veeam-style (senza prefisso job_)
+  set_field("start_time", $message.job_start_time);
+  set_field("end_time", $message.job_end_time);
+  set_field("duration_seconds", $message.job_duration_seconds);
+  set_field("duration_minutes", $message.job_duration_minutes);
+
+  // Conteggi oggetti: alias Veeam-style (objects_*)
+  set_field("objects_total", $message.vm_count);
+  set_field("objects_success", $message.vms_success);
+  set_field("objects_warning", $message.vms_warning);
+  set_field("objects_failed", $message.vms_failed);
+
+  // Sorgente backup per filtraggio unificato
+  set_field("backup_source", "proxmox");
+end
