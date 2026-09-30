@@ -228,7 +228,7 @@ def sync_remote_config(config: Dict[str, Any], config_file: Path) -> Dict[str, A
     config_changed = False
     
     # Controlla sezioni chiave per modifiche
-    for section in ['syslog', 'smtp', 'alerts', 'hardware_monitoring', 'hardware_thresholds', 'pve_monitor']:
+    for section in ['syslog', 'smtp', 'alerts', 'hardware_monitoring', 'hardware_thresholds', 'pve_monitor', 'survey']:
         if merged_config.get(section) != config.get(section):
             config_changed = True
             logger.debug(f"Sezione '{section}' aggiornata dalla config remota")
@@ -334,7 +334,9 @@ def merge_remote_defaults(local_config: Dict[str, Any], remote_config: Dict[str,
     # emesso dal portale NON è qui: sta in .survey_codice, perché config.json
     # viene riscritto dall'installer "managed" e da save_merged_config.
     if "survey" in remote_config:
-        local_survey = merged.get("survey", {})
+        # Copia: merged e' una copia superficiale, e modificare la sezione sul
+        # posto la renderebbe sempre uguale a se stessa nel confronto di sync.
+        local_survey = dict(merged.get("survey") or {})
         for key in ("enabled", "portale", "arruolamento", "solo"):
             value = remote_config["survey"].get(key)
             if value is not None:

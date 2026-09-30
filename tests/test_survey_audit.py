@@ -224,11 +224,12 @@ def test_download_troncato_senza_cache_ritorna_vuoto(percorsi, monkeypatch):
     assert not os.path.exists(sa.CACHE)
 
 
-def test_download_401_senza_cache_ritorna_vuoto(percorsi, monkeypatch):
+def test_download_401_senza_cache_e_codice_non_valido(percorsi, monkeypatch):
     def finto(req, timeout=None):
         raise _http_error(401)
     monkeypatch.setattr(sa.urllib.request, "urlopen", finto)
-    assert sa.scarica_strumento("https://p/proxmox", "PXM-X") == ""
+    with pytest.raises(sa.CodiceNonValido):
+        sa.scarica_strumento("https://p/proxmox", "PXM-X")
 
 
 # ---- giro di correzioni 1 ----
@@ -390,6 +391,7 @@ def test_survey_audit_viaggia_con_gli_script_aggiornati():
 
 def test_setup_survey_cron_scrive_una_volta_e_sostituisce(tmp_path, capsys):
     from update_scripts import setup_survey_cron
+    (tmp_path / "survey_audit.py").write_text("")
     cron = tmp_path / "proxreporter-survey"
     cfg = {"client": {"codcli": "ACME"}}
     assert setup_survey_cron(tmp_path, cfg, cron_file=cron) is True
@@ -410,3 +412,225 @@ def test_setup_survey_cron_senza_codcli_non_scrive(tmp_path):
     assert setup_survey_cron(tmp_path, {"client": {"codcli": ""}}, cron_file=cron) is False
     assert setup_survey_cron(tmp_path, {}, cron_file=cron) is False
     assert not cron.exists()
+
+
+# ---- giro di correzioni finale (revisione dell'intero ramo) ----
+
+def _sync(tmp_path, monkeypatch, locale, remoto):
+    """Passa da sync_remote_config vera, con il solo scaricamento finto, e
+    RILEGGE il file: e' su disco che il difetto si vedeva."""
+    import remote_config as rc
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps(locale))
+    monkeypatch.setattr(rc, "download_remote_config", lambda c, d: remoto)
+    ritorno = rc.sync_remote_config(json.loads(cfg_file.read_text()), cfg_file)
+    return json.loads(cfg_file.read_text()), ritorno
+
+
+def test_sync_scrive_su_disco_la_sezione_survey_nuova(tmp_path, monkeypatch):
+    """C2: un nodo senza sezione survey la riceveva solo in memoria."""
+    su_disco, _ = _sync(tmp_path, monkeypatch, {"client": {"codcli": "ACME"}},
+                        {"survey": {"enabled": True, "portale": "https://p/proxmox",
+                                    "arruolamento": "s", "solo": ["ACME"]}})
+    assert su_disco["survey"]["enabled"] is True
+    assert su_disco["survey"]["portale"] == "https://p/proxmox"
+
+
+def test_sync_scrive_su_disco_lo_spegnimento(tmp_path, monkeypatch):
+    """C2: l'interruttore del master non spegneva: enabled restava true."""
+    su_disco, _ = _sync(tmp_path, monkeypatch,
+                        {"survey": {"enabled": True, "portale": "https://p/proxmox"}},
+                        {"survey": {"enabled": False}})
+    assert su_disco["survey"]["enabled"] is False
+    assert su_disco["survey"]["portale"] == "https://p/proxmox"
+
+
+def test_il_merge_non_modifica_la_config_locale_ricevuta():
+    from remote_config import merge_remote_defaults
+    locale = {"survey": {"enabled": True}}
+    merge_remote_defaults(locale, {"survey": {"enabled": False}})
+    assert locale["survey"]["enabled"] is True
+
+
+def _strumento_finto(tmp_path, corpo):
+    p = tmp_path / "finto.py"
+    p.write_text(corpo)
+    return str(p)
+
+
+def test_esegui_rc0_senza_archiviata_non_e_confermato(percorsi):
+    """C3: audit-nodo esce 0 anche quando l'invio fallisce."""
+    tmp, _ = percorsi
+    s = _strumento_finto(tmp, "print('Invio non riuscito: 401')\n")
+    rc, coda = sa.esegui(s, "https://p/proxmox", "PXM-AAAA-BBBB", "Acme", "ACME")
+    assert rc == 0
+    assert sa.invio_confermato(rc, coda) is False
+
+
+def test_esegui_rc0_con_archiviata_e_confermato(percorsi):
+    tmp, _ = percorsi
+    s = _strumento_finto(tmp, "print('Archiviata: 0 bloccanti, 2 da valutare.')\n"
+                              "print('Il report è consultabile su https://p/r/1')\n")
+    rc, coda = sa.esegui(s, "https://p/proxmox", "PXM-AAAA-BBBB", "Acme", "ACME")
+    assert sa.invio_confermato(rc, coda) is True
+    assert sa.invio_confermato(1, coda) is False
+
+
+def test_esegui_tiene_solo_la_coda(percorsi):
+    tmp, _ = percorsi
+    s = _strumento_finto(tmp, "for i in range(5000):\n    print('riga', i)\n")
+    rc, coda = sa.esegui(s, "https://p/proxmox", "PXM-AAAA-BBBB", "Acme", "ACME")
+    assert len(coda) <= 200 and coda[-1] == "riga 4999"
+
+
+def test_timeout_uccide_anche_i_sottoprocessi(percorsi):
+    """Il collector lancia figli che tengono aperta la pipe: senza killpg
+    l'agente resta appeso."""
+    import time as _t
+    tmp, _ = percorsi
+    pidfile = tmp / "figlio.pid"
+    s = _strumento_finto(tmp, (
+        "import subprocess, sys, time\n"
+        "f = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "open(%r, 'w').write(str(f.pid))\n"
+        "time.sleep(60)\n" % str(pidfile)))
+    t0 = _t.time()
+    rc, coda = sa.esegui(s, "https://p/proxmox", "PXM-AAAA-BBBB", "Acme", "ACME", timeout=2)
+    assert rc == 124 and _t.time() - t0 < 20
+    pid = int(pidfile.read_text())
+    _t.sleep(0.5)
+    with pytest.raises(OSError):
+        os.kill(pid, 0)
+
+
+def _giro(percorsi, monkeypatch, esito_esegui):
+    tmp, avvisi = percorsi
+    _config_portale(tmp, "https://p/proxmox")
+    sa.salva_codice("PXM-AAAA-BBBB-CCCC", "ACME", "")
+    monkeypatch.setattr(sa, "stato_cluster", lambda: [])
+    monkeypatch.setattr(sa, "scarica_strumento", lambda p, c: "/x")
+    monkeypatch.setattr(sa, "esegui", lambda *a, **k: esito_esegui)
+    return sa.main([]), avvisi
+
+
+def test_rc0_senza_conferma_non_aggiorna_ultimo_invio_e_allarma(percorsi, monkeypatch):
+    rc, avvisi = _giro(percorsi, monkeypatch, (0, ["Invio non riuscito: 401 PXM-AAAA-BBBB-CCCC"]))
+    assert rc == 1
+    st = sa.leggi_stato()
+    assert "ultimo_invio" not in st and st["esito"] == "invio_non_confermato"
+    assert avvisi and avvisi[0][0] == "error"
+    assert "Invio non riuscito" in avvisi[0][1]
+    assert "PXM-AAAA-BBBB-CCCC" not in avvisi[0][1]
+
+
+def test_rc0_con_conferma_aggiorna_ultimo_invio(percorsi, monkeypatch):
+    rc, avvisi = _giro(percorsi, monkeypatch, (0, ["Archiviata: 0 bloccanti, 1 da valutare."]))
+    assert rc == 0 and "ultimo_invio" in sa.leggi_stato() and not avvisi
+
+
+def test_download_401_col_codice_salvato_lo_mette_da_parte(percorsi, monkeypatch):
+    """I2: il codice revocato veniva riusato per sempre e la raccolta rifatta."""
+    tmp, avvisi = percorsi
+    _config_portale(tmp, "https://p/proxmox")
+    sa.salva_codice("PXM-AAAA-BBBB-CCCC", "ACME", "")
+    monkeypatch.setattr(sa, "stato_cluster", lambda: [])
+    monkeypatch.setattr(sa.urllib.request, "urlopen",
+                        lambda *a, **k: (_ for _ in ()).throw(_http_error(401)))
+    chiamato = []
+    monkeypatch.setattr(sa, "esegui", lambda *a, **k: chiamato.append(1) or (0, []))
+    assert sa.main([]) == 0
+    assert chiamato == []
+    assert not os.path.exists(sa.FILE_CODICE)
+    assert [f for f in os.listdir(str(tmp)) if f.startswith(".survey_codice.revocato-")]
+    assert not avvisi
+
+
+def test_download_401_non_usa_la_cache(percorsi, monkeypatch):
+    tmp, _ = percorsi
+    os.makedirs(os.path.dirname(sa.CACHE))
+    open(sa.CACHE, "w").write(STRUMENTO_OK)
+    monkeypatch.setattr(sa.urllib.request, "urlopen",
+                        lambda *a, **k: (_ for _ in ()).throw(_http_error(401)))
+    with pytest.raises(sa.CodiceNonValido):
+        sa.scarica_strumento("https://p/proxmox", "PXM-X")
+
+
+def test_guasto_di_rete_non_e_indirizzo_non_valido(percorsi, monkeypatch):
+    import http.client
+    tmp, _ = percorsi
+    monkeypatch.setattr(sa.urllib.request, "urlopen",
+                        lambda *a, **k: (_ for _ in ()).throw(http.client.RemoteDisconnected("x")))
+    assert sa.scarica_strumento("https://p/proxmox", "PXM-X") == ""
+    log_ = open(sa.LOG).read()
+    assert "download fallito" in log_ and "indirizzo" not in log_
+    monkeypatch.setattr(sa.urllib.request, "urlopen",
+                        lambda *a, **k: (_ for _ in ()).throw(http.client.InvalidURL("x")))
+    sa.scarica_strumento("https://p/proxmox", "PXM-X")
+    assert "indirizzo del portale non valido" in open(sa.LOG).read()
+
+
+def test_avvisa_decifra_la_password_smtp(tmp_path, monkeypatch):
+    import types
+    monkeypatch.setattr(sa, "INSTALL", str(tmp_path))
+    monkeypatch.setattr(sa, "LOG", str(tmp_path / "s.log"))
+    (tmp_path / "config.json").write_text(json.dumps({"smtp": {"password": "ENC:abc", "host": "h"}}))
+    visto = {}
+    m = types.ModuleType("alert_manager")
+    m.AlertSeverity = type("S", (), {"ERROR": "e"})
+    m.AlertType = type("T", (), {"CUSTOM": "c"})
+
+    class G:
+        def __init__(self, cfg):
+            visto["cfg"] = cfg
+
+        def send_alert(self, *a, **k):
+            return {"email": True}
+    m.AlertManager = G
+    monkeypatch.setitem(sys.modules, "alert_manager", m)
+    hb = types.ModuleType("heartbeat")
+    hb.decrypt_password = lambda enc, d: "in-chiaro"
+    monkeypatch.setitem(sys.modules, "heartbeat", hb)
+    sa.avvisa("error", "x")
+    assert visto["cfg"]["smtp"]["password"] == "in-chiaro"
+
+
+def test_avvisa_senza_decifratura_prosegue_e_lo_scrive(tmp_path, monkeypatch):
+    import types
+    monkeypatch.setattr(sa, "INSTALL", str(tmp_path))
+    monkeypatch.setattr(sa, "LOG", str(tmp_path / "s.log"))
+    (tmp_path / "config.json").write_text(json.dumps({"smtp": {"password": "ENC:abc"}}))
+    _finto_alert_manager(monkeypatch, {"syslog": True})
+    hb = types.ModuleType("heartbeat")
+
+    def rotta(enc, d):
+        raise RuntimeError("niente chiave")
+    hb.decrypt_password = rotta
+    monkeypatch.setitem(sys.modules, "heartbeat", hb)
+    sa.avvisa("error", "x")
+    assert "decifrare" in open(sa.LOG).read()
+
+
+def test_cron_import_fallito_non_fa_cadere_il_setup(tmp_path, monkeypatch, capsys):
+    import update_scripts as us
+    (tmp_path / "survey_audit.py").write_text("")
+
+    def rotta(codcli, install_dir=None):
+        raise ImportError("no survey_audit")
+    monkeypatch.setattr(us, "riga_cron_survey", rotta)
+    cron = tmp_path / "cron"
+    assert us.setup_survey_cron(tmp_path, {"client": {"codcli": "ACME"}}, cron_file=cron) is False
+    assert not cron.exists()
+    assert "no survey_audit" in capsys.readouterr().out
+
+
+def test_cron_senza_script_non_scrive_il_file(tmp_path, capsys):
+    import update_scripts as us
+    cron = tmp_path / "cron"
+    assert us.setup_survey_cron(tmp_path, {"client": {"codcli": "ACME"}}, cron_file=cron) is False
+    assert not cron.exists()
+    assert "survey_audit.py" in capsys.readouterr().out
+
+
+def test_cron_usa_install_dir(tmp_path):
+    import update_scripts as us
+    assert str(tmp_path / "survey_audit.py") in us.riga_cron_survey("ACME", tmp_path)

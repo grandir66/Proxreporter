@@ -9,12 +9,14 @@ giorno che una soglia cambia il cliente si sente dire due cose diverse.
 Solo stdlib: gira sui nodi Proxmox, dove non si installa nulla.
 """
 import argparse
+import collections
 import hashlib
 import http.client
 import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -33,10 +35,15 @@ LOG = "/var/log/proxreporter/survey.log"
 VERSIONE_AGENTE = "1.0"
 ATTESA_REVOCATO = 24 * 3600
 MAX_DOWNLOAD = 5 * 1024 * 1024
+MAX_CODA = 200          # righe d'uscita dello strumento tenute in memoria
 _verboso = False
 _segreti = []           # valori esatti da non scrivere mai (segreto di arruolamento, codice)
 _RE_CODICE = re.compile(r"PXM-[A-Za-z0-9-]+")
 _RE_VERSIONE = re.compile(r"^VERSIONE_SCRIPT\s*=\s*['\"]([^'\"]*)['\"]", re.M)
+
+
+class CodiceNonValido(Exception):
+    """Il portale risponde 401 al download: il codice non vale più."""
 
 
 # ---------------------------------------------------------------- decisioni
@@ -74,6 +81,20 @@ def troppo_presto(stato, adesso, giorni=3):
     entrambi capofila."""
     ultimo = (stato or {}).get("ultimo_invio")
     return bool(ultimo) and (adesso - float(ultimo)) < giorni * 86400
+
+
+def invio_confermato(rc, coda):
+    """audit-nodo esce 0 anche se l'invio fallisce (401/413/rete) o la raccolta
+    è vuota: vale come riuscito solo se ha stampato la conferma del portale."""
+    return rc == 0 and any(r.lstrip().startswith("Archiviata:") for r in (coda or []))
+
+
+def pagina_report(coda):
+    """L'indirizzo della pagina del report, se lo strumento l'ha stampato."""
+    for r in coda or []:
+        if "consultabile su " in r:
+            return r.split("consultabile su ", 1)[1].strip()
+    return ""
 
 
 def accettabile(testo):
@@ -232,8 +253,11 @@ def arruola(portale, segreto, codcli, cliente, cluster, nodo):
         else:
             log("arruolamento: risposta inattesa dal portale (%s)" % e.code)
         return ""
-    except (ValueError, http.client.HTTPException):
+    except (ValueError, http.client.InvalidURL):
         log("arruolamento: indirizzo del portale non valido nella configurazione")
+        return ""
+    except http.client.HTTPException as e:
+        log("arruolamento: guasto di rete (%s): riprovo alla prossima esecuzione" % type(e).__name__)
         return ""
     except (urllib.error.URLError, OSError) as e:
         log("arruolamento: portale non raggiungibile (%s): riprovo alla prossima esecuzione" % e)
@@ -272,12 +296,16 @@ def scarica_strumento(portale, codice):
                 log("strumento scaricato, versione %s" % versione)
                 return CACHE
             motivo = "il file scaricato non è lo strumento (non compila o senza VERSIONE_SCRIPT)"
-    except (ValueError, http.client.HTTPException) as e:
+    except (ValueError, http.client.InvalidURL) as e:
         if isinstance(e, UnicodeDecodeError):
             motivo = "il file scaricato non è testo valido"
         else:
             motivo = "indirizzo del portale non valido nella configurazione"
+    except http.client.HTTPException as e:
+        motivo = "download fallito (guasto di rete: %s)" % type(e).__name__
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise CodiceNonValido()
         motivo = "download rifiutato (%s)" % e.code
     except (urllib.error.URLError, OSError) as e:
         motivo = "download fallito (%s)" % e
@@ -288,26 +316,67 @@ def scarica_strumento(portale, codice):
     return ""
 
 
-def esegui(strumento, portale, codice, cliente, codcli):
-    """Lancia lo strumento in una cartella temporanea, rimossa sempre."""
+def esegui(strumento, portale, codice, cliente, codcli, timeout=2400):
+    """Lancia lo strumento in una cartella temporanea, rimossa sempre.
+    Ritorna (codice di uscita, ultime righe dell'uscita). L'uscita va su un file
+    e ne resta in memoria solo la coda; lo strumento gira in un gruppo di
+    processi suo, ucciso per intero al timeout (i figli del collector non
+    devono restare appesi)."""
     tmp = tempfile.mkdtemp(prefix="survey-")
     try:
         cmd = [sys.executable, strumento, "--json", tmp + "/raccolta.json", "--output", tmp,
                "--invia", portale, "--codice-portale", codice, "--cliente", cliente,
                "--codice", codcli, "--no-color", "--breve"]
-        try:
-            r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT, universal_newlines=True,
-                               timeout=2400)
-        except subprocess.TimeoutExpired:
-            log("strumento interrotto dopo 2400 secondi")
-            return 124
-        coda = (r.stdout or "").strip().splitlines()[-15:]
-        for riga in coda:
+        percorso_uscita = os.path.join(tmp, "uscita.txt")
+        with open(percorso_uscita, "w") as uscita:
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=uscita,
+                                    stderr=subprocess.STDOUT, start_new_session=True)
+            try:
+                rc = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                log("strumento interrotto dopo %s secondi" % timeout)
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                proc.wait()
+                rc = 124
+        coda = collections.deque(maxlen=MAX_CODA)
+        with open(percorso_uscita, errors="replace") as f:
+            for riga in f:
+                coda.append(riga.rstrip("\n"))
+        coda = list(coda)
+        for riga in coda[-15:]:
             log("  | " + riga)
-        return r.returncode
+        return rc, coda
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _config_decifrata():
+    """Il config con i valori `ENC:` in chiaro, come li vuole AlertManager (la
+    password SMTP cifrata farebbe fallire la mail). Riusa la funzione
+    dell'heartbeat; se non riesce si prosegue col config com'è e lo si scrive:
+    resta il syslog."""
+    cfg = leggi_config()
+    try:
+        import heartbeat
+        from pathlib import Path
+
+        def _apri(v):
+            if isinstance(v, dict):
+                return {k: _apri(x) for k, x in v.items()}
+            if isinstance(v, str) and v.startswith("ENC:"):
+                chiaro = heartbeat.decrypt_password(v, Path(INSTALL))
+                if not chiaro:
+                    raise ValueError("valore cifrato non decifrabile")
+                return chiaro
+            return v
+        return _apri(cfg)
+    except Exception as e:  # noqa: BLE001 - senza decifratura si va avanti col syslog
+        log("config non decifrato: impossibile decifrare (%s: %s), l'allarme può arrivare solo dal syslog"
+            % (type(e).__name__, e))
+        return cfg
 
 
 def avvisa(gravita, testo):
@@ -321,7 +390,7 @@ def avvisa(gravita, testo):
         import alert_manager
         sev = getattr(alert_manager.AlertSeverity, str(gravita).upper(),
                       alert_manager.AlertSeverity.ERROR)
-        gestore = alert_manager.AlertManager(leggi_config())
+        gestore = alert_manager.AlertManager(_config_decifrata())
         testo = ripulisci(testo)
         esito = gestore.send_alert(alert_manager.AlertType.CUSTOM, sev,
                                    "Survey: verifica del cluster", testo, force_immediate=True)
@@ -383,20 +452,40 @@ def _esegui_agente():
         salva_codice(codice, codcli, cluster)
         log("arruolato: codice salvato")
 
-    strumento = scarica_strumento(portale, codice)
+    try:
+        strumento = scarica_strumento(portale, codice)
+    except CodiceNonValido:
+        # Revocato dopo il salvataggio: non si rifà la raccolta di tutto il
+        # cluster per un invio che prenderebbe 401. Il file si tiene da parte;
+        # al giro dopo l'arruolamento risponde 409 e l'agente tace 24 ore.
+        revocato = "%s.revocato-%s" % (FILE_CODICE, time.strftime("%Y%m%d"))
+        try:
+            os.replace(FILE_CODICE, revocato)
+        except OSError as e:
+            log("codice non valido (401) ma non riesco a metterlo da parte: %s" % e)
+            return 0
+        log("il portale rifiuta il codice salvato (401): messo da parte in %s, esco" % revocato)
+        return 0
     if not strumento:
         scrivi_stato(ultimo_tentativo=adesso, esito="strumento_assente")
         avvisa("critical", "survey: strumento audit-nodo.py non scaricabile e nessuna copia in cache (%s)" % codcli)
         return 1
 
-    rc = esegui(strumento, portale, codice, cliente, codcli)
-    if rc == 0:
+    rc, coda = esegui(strumento, portale, codice, cliente, codcli)
+    if invio_confermato(rc, coda):
         scrivi_stato(ultimo_invio=time.time(), ultimo_tentativo=adesso, esito="ok")
-        log("verifica inviata al portale")
+        pagina = pagina_report(coda)
+        log("verifica inviata al portale" + (" (report: %s)" % pagina if pagina else ""))
         return 0
-    scrivi_stato(ultimo_tentativo=adesso, esito="errore_%s" % rc)
-    log("strumento uscito con codice %s" % rc)
-    avvisa("error", "survey: la verifica del cluster non è stata inviata (uscita %s, %s)" % (rc, codcli))
+    if rc == 0:
+        esito, quadro = "invio_non_confermato", "invio non confermato dal portale"
+    else:
+        esito, quadro = "errore_%s" % rc, "uscita %s" % rc
+    scrivi_stato(ultimo_tentativo=adesso, esito=esito)
+    log("strumento: %s" % quadro)
+    fine = "\n".join(ripulisci(r) for r in coda[-20:])
+    avvisa("error", "survey: la verifica del cluster non è stata inviata (%s, %s)\n%s"
+           % (quadro, codcli, fine))
     return 1
 
 

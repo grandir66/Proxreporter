@@ -401,7 +401,10 @@ def post_update_tasks(install_dir: Path, was_updated: bool) -> None:
                 config = json.load(f)
         except Exception:
             pass
-    setup_survey_cron(install_dir, config)
+    try:
+        setup_survey_cron(install_dir, config)
+    except Exception as e:
+        print(f"  ⚠ Cron survey non configurato: {type(e).__name__}: {e}")
     
     print("✓ Configurazione automatica completata")
 
@@ -467,11 +470,12 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 SURVEY_CRON_FILE = Path("/etc/cron.d/proxreporter-survey")
 
 
-def riga_cron_survey(codcli):
-    """Settimanale, all'istante che tocca a questo cliente."""
+def riga_cron_survey(codcli, install_dir=Path("/opt/proxreport")):
+    """Settimanale, all'istante che tocca a questo cliente. Il percorso dello
+    script viene da install_dir, come per l'heartbeat."""
     from survey_audit import pianificazione
     minuto, ora, giorno = pianificazione(codcli)
-    return (f"{minuto} {ora} * * {giorno} root /usr/bin/python3 /opt/proxreport/survey_audit.py"
+    return (f"{minuto} {ora} * * {giorno} root /usr/bin/python3 {Path(install_dir) / 'survey_audit.py'}"
             " >> /var/log/proxreporter/survey.log 2>&1\n")
 
 
@@ -498,18 +502,30 @@ def setup_survey_cron(install_dir: Path, config: Dict[str, Any],
         print("  ℹ codcli non configurato, skip cron survey")
         return False
 
+    # Senza lo script la riga farebbe fallire il cron ogni settimana in silenzio
+    if not (Path(install_dir) / "survey_audit.py").exists():
+        print(f"  ⚠ {Path(install_dir) / 'survey_audit.py'} non presente, cron survey non scritto")
+        return False
+
+    # Un guasto qui (import, pianificazione) non deve far cadere l'aggiornamento
+    try:
+        riga = riga_cron_survey(codcli, install_dir)
+    except Exception as e:
+        print(f"  ⚠ Cron survey non configurato: {type(e).__name__}: {e}")
+        return False
+
     try:
         esistente = cron_file.read_text() if cron_file.exists() else ""
     except Exception:
         esistente = ""
     if esistente:
-        contenuto = applica_cron(esistente, riga_cron_survey(codcli))
+        contenuto = applica_cron(esistente, riga)
     else:
         contenuto = ("# Proxreporter Survey - verifica settimanale del cluster\n"
                      "# Generato automaticamente da update_scripts.py\n"
                      "SHELL=/bin/bash\n"
                      "PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n\n"
-                     + riga_cron_survey(codcli))
+                     + riga)
     if contenuto == esistente:
         print("  ✓ Cron survey già configurato")
         return True
