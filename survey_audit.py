@@ -10,8 +10,10 @@ Solo stdlib: gira sui nodi Proxmox, dove non si installa nulla.
 """
 import argparse
 import hashlib
+import http.client
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -30,7 +32,11 @@ LOG = "/var/log/proxreporter/survey.log"
 
 VERSIONE_AGENTE = "1.0"
 ATTESA_REVOCATO = 24 * 3600
+MAX_DOWNLOAD = 5 * 1024 * 1024
 _verboso = False
+_segreti = []           # valori esatti da non scrivere mai (segreto di arruolamento, codice)
+_RE_CODICE = re.compile(r"PXM-[A-Za-z0-9-]+")
+_RE_VERSIONE = re.compile(r"^VERSIONE_SCRIPT\s*=\s*['\"]([^'\"]*)['\"]", re.M)
 
 
 # ---------------------------------------------------------------- decisioni
@@ -80,12 +86,29 @@ def accettabile(testo):
     return True
 
 
+def versione_strumento(testo):
+    """La versione dichiarata da audit-nodo.py (`VERSIONE_SCRIPT = "x"`), ''
+    se manca: compilare non basta a dire che quello sia lo strumento."""
+    m = _RE_VERSIONE.search(testo or "")
+    return m.group(1) if m else ""
+
+
 # ------------------------------------------------------------------- log
+
+def ripulisci(testo):
+    """Toglie da un testo il codice del portale e il segreto di arruolamento:
+    stanno negli URL e nelle eccezioni, e il log finisce anche in una mail."""
+    testo = _RE_CODICE.sub("PXM-***", str(testo))
+    for v in _segreti:
+        if v:
+            testo = testo.replace(v, "***")
+    return testo
+
 
 def log(messaggio):
     """Una riga con l'ora. Scrive nel file di log; con -v anche a schermo.
     Se il file non è scrivibile lo dice su stderr: il log non tace mai."""
-    riga = "%s survey_audit: %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), messaggio)
+    riga = "%s survey_audit: %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), ripulisci(messaggio))
     try:
         cartella = os.path.dirname(LOG)
         if cartella:
@@ -114,37 +137,43 @@ def leggi_config(percorso=None):
 
 
 def stato_cluster():
-    """`pvesh get /cluster/status`; [] fuori cluster o se pvesh non risponde
-    (in quel caso lo scrive nel log, perché [] vuol dire «tocca a me»)."""
+    """`pvesh get /cluster/status`. Tre esiti: la lista (un nodo singolo ne ha
+    una con la sola sua voce), oppure None se pvesh non risponde: non so."""
     try:
         r = subprocess.run(["pvesh", "get", "/cluster/status", "--output-format", "json"],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            universal_newlines=True, timeout=60)
     except (OSError, subprocess.SubprocessError) as e:
-        log("pvesh non eseguibile (%s): trattato come nodo singolo" % e)
-        return []
+        log("pvesh non eseguibile (%s)" % e)
+        return None
     if r.returncode != 0:
-        log("pvesh uscito con %s: trattato come nodo singolo (%s)"
+        log("pvesh uscito con %s (%s)"
             % (r.returncode, (r.stderr or "").strip()[:200]))
-        return []
+        return None
     try:
         dati = json.loads(r.stdout)
     except ValueError:
-        log("pvesh ha risposto con JSON non valido: trattato come nodo singolo")
-        return []
-    return dati if isinstance(dati, list) else []
+        log("pvesh ha risposto con JSON non valido")
+        return None
+    return dati if isinstance(dati, list) else None
 
 
 def _scrivi_atomico(percorso, testo, modo=0o600):
     cartella = os.path.dirname(percorso)
     if cartella:
         os.makedirs(cartella, exist_ok=True)
-    tmp = percorso + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, modo)
-    with os.fdopen(fd, "w") as f:
-        f.write(testo)
-    os.chmod(tmp, modo)
-    os.replace(tmp, percorso)
+    fd, tmp = tempfile.mkstemp(dir=cartella or ".", prefix=".tmp-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(testo)
+        os.chmod(tmp, modo)
+        os.replace(tmp, percorso)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def codice_salvato():
@@ -184,9 +213,9 @@ def arruola(portale, segreto, codcli, cliente, cluster, nodo):
     url = portale.rstrip("/") + "/api/agente/arruola"
     corpo = json.dumps({"codcli": codcli, "cliente": cliente, "cluster": cluster,
                         "nodo": nodo, "versione_agente": VERSIONE_AGENTE}).encode()
-    req = urllib.request.Request(url, data=corpo, method="POST", headers={
-        "Content-Type": "application/json", "X-Arruolamento": segreto or ""})
     try:
+        req = urllib.request.Request(url, data=corpo, method="POST", headers={
+            "Content-Type": "application/json", "X-Arruolamento": segreto or ""})
         with urllib.request.urlopen(req, timeout=30) as r:
             stato = r.getcode()
             testo = r.read().decode("utf-8", "replace")
@@ -202,6 +231,9 @@ def arruola(portale, segreto, codcli, cliente, cluster, nodo):
             log("arruolamento non ancora disponibile sul portale (404): riprovo alla prossima esecuzione")
         else:
             log("arruolamento: risposta inattesa dal portale (%s)" % e.code)
+        return ""
+    except (ValueError, http.client.HTTPException):
+        log("arruolamento: indirizzo del portale non valido nella configurazione")
         return ""
     except (urllib.error.URLError, OSError) as e:
         log("arruolamento: portale non raggiungibile (%s): riprovo alla prossima esecuzione" % e)
@@ -229,14 +261,25 @@ def scarica_strumento(portale, codice):
     motivo = ""
     try:
         with urllib.request.urlopen(url, timeout=60) as r:
-            testo = r.read().decode("utf-8")
-        if accettabile(testo):
-            _scrivi_atomico(CACHE, testo, 0o700)
-            return CACHE
-        motivo = "il file scaricato non è Python valido (troncato o pagina di errore)"
+            dati = r.read(MAX_DOWNLOAD + 1)
+        if len(dati) > MAX_DOWNLOAD:
+            motivo = "il file scaricato supera %d MB" % (MAX_DOWNLOAD // (1024 * 1024))
+        else:
+            testo = dati.decode("utf-8")
+            versione = versione_strumento(testo)
+            if accettabile(testo) and versione:
+                _scrivi_atomico(CACHE, testo, 0o700)
+                log("strumento scaricato, versione %s" % versione)
+                return CACHE
+            motivo = "il file scaricato non è lo strumento (non compila o senza VERSIONE_SCRIPT)"
+    except (ValueError, http.client.HTTPException) as e:
+        if isinstance(e, UnicodeDecodeError):
+            motivo = "il file scaricato non è testo valido"
+        else:
+            motivo = "indirizzo del portale non valido nella configurazione"
     except urllib.error.HTTPError as e:
         motivo = "download rifiutato (%s)" % e.code
-    except (urllib.error.URLError, OSError, UnicodeDecodeError) as e:
+    except (urllib.error.URLError, OSError) as e:
         motivo = "download fallito (%s)" % e
     if os.path.exists(CACHE):
         log("%s: uso la copia in cache" % motivo)
@@ -279,10 +322,13 @@ def avvisa(gravita, testo):
         sev = getattr(alert_manager.AlertSeverity, str(gravita).upper(),
                       alert_manager.AlertSeverity.ERROR)
         gestore = alert_manager.AlertManager(leggi_config())
-        gestore.send_alert(alert_manager.AlertType.CUSTOM, sev,
-                           "Survey: verifica del cluster", testo, force_immediate=True)
+        testo = ripulisci(testo)
+        esito = gestore.send_alert(alert_manager.AlertType.CUSTOM, sev,
+                                   "Survey: verifica del cluster", testo, force_immediate=True)
+        if not esito or not any(esito.values()):
+            log("allarme NON consegnato: %s %s" % (gravita, testo))
     except Exception as e:  # noqa: BLE001 - l'allarme non deve mai far cadere l'agente
-        log("allarme NON inviato (%s: %s): %s" % (type(e).__name__, e, testo))
+        log("allarme NON inviato (%s: %s): %s" % (type(e).__name__, e, ripulisci(testo)))
 
 
 # ------------------------------------------------------------------ main
@@ -291,6 +337,7 @@ def _esegui_agente():
     cfg = leggi_config()
     client = cfg.get("client") or {}
     survey = cfg.get("survey") or {}
+    _segreti[:] = [str(survey.get("arruolamento") or "").strip()]
     codcli = str(client.get("codcli") or "").strip()
     cliente = str(client.get("nomecliente") or "").strip()
 
@@ -304,6 +351,10 @@ def _esegui_agente():
 
     nodo = socket.gethostname().split(".")[0]
     stato = stato_cluster()
+    if stato is None:
+        log("stato del cluster sconosciuto, non invio")
+        avvisa("warning", "survey: stato del cluster sconosciuto (pvesh non risponde), nessun invio da %s" % nodo)
+        return 0
     if not tocca_a_me(stato, nodo):
         log("non sono il nodo capofila (%s): esco" % nodo)
         return 0
@@ -316,6 +367,8 @@ def _esegui_agente():
         return 0
 
     codice = codice_salvato()
+    if codice:
+        _segreti.append(codice)
     if not codice:
         rev = st.get("revocato_il")
         if rev and adesso - float(rev) < ATTESA_REVOCATO:
@@ -326,6 +379,7 @@ def _esegui_agente():
         if not codice:
             log("nessun codice ottenuto (attesa, revoca o portale non pronto): esco senza guasto")
             return 0
+        _segreti.append(codice)
         salva_codice(codice, codcli, cluster)
         log("arruolato: codice salvato")
 
@@ -355,8 +409,9 @@ def main(argv=None):
     try:
         return _esegui_agente()
     except Exception as e:  # noqa: BLE001 - unico except largo: verso cron non passa nulla, ma scrive
-        log("errore imprevisto: %s: %s" % (type(e).__name__, e))
-        avvisa("critical", "survey: errore imprevisto dell'agente (%s: %s)" % (type(e).__name__, e))
+        msg = ripulisci("%s: %s" % (type(e).__name__, e))
+        log("errore imprevisto: " + msg)
+        avvisa("critical", "survey: errore imprevisto dell'agente (%s)" % msg)
         return 1
 
 

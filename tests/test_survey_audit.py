@@ -97,6 +97,9 @@ class _Risposta(io.BytesIO):
         return False
 
 
+STRUMENTO_OK = 'VERSIONE_SCRIPT = "2.1"\nprint(1)\n'
+
+
 def _http_error(codice):
     return urllib.error.HTTPError("http://x", codice, "err", {}, io.BytesIO(b"<html>errore</html>"))
 
@@ -199,19 +202,19 @@ def test_stato_si_unisce_non_si_sovrascrive(percorsi):
 
 def test_download_valido_aggiorna_la_cache(percorsi, monkeypatch):
     monkeypatch.setattr(sa.urllib.request, "urlopen",
-                        lambda req, timeout=None: _Risposta(b"print('nuovo')\n"))
+                        lambda req, timeout=None: _Risposta(STRUMENTO_OK.encode()))
     p = sa.scarica_strumento("https://p/proxmox", "PXM-X")
-    assert p == sa.CACHE and "nuovo" in open(p).read()
+    assert p == sa.CACHE and "VERSIONE_SCRIPT" in open(p).read()
 
 
 def test_download_troncato_usa_la_cache(percorsi, monkeypatch):
     os.makedirs(os.path.dirname(sa.CACHE))
     with open(sa.CACHE, "w") as f:
-        f.write("print('vecchio')\n")
+        f.write(STRUMENTO_OK + "# vecchio\n")
     monkeypatch.setattr(sa.urllib.request, "urlopen",
                         lambda req, timeout=None: _Risposta(b"<html>502 Bad Gateway</html>"))
     p = sa.scarica_strumento("https://p/proxmox", "PXM-X")
-    assert p == sa.CACHE and "vecchio" in open(p).read()
+    assert p == sa.CACHE and "# vecchio" in open(p).read()
 
 
 def test_download_troncato_senza_cache_ritorna_vuoto(percorsi, monkeypatch):
@@ -226,3 +229,114 @@ def test_download_401_senza_cache_ritorna_vuoto(percorsi, monkeypatch):
         raise _http_error(401)
     monkeypatch.setattr(sa.urllib.request, "urlopen", finto)
     assert sa.scarica_strumento("https://p/proxmox", "PXM-X") == ""
+
+
+# ---- giro di correzioni 1 ----
+
+def test_senza_dichiarazione_di_versione_non_si_accetta(percorsi, monkeypatch):
+    monkeypatch.setattr(sa.urllib.request, "urlopen",
+                        lambda req, timeout=None: _Risposta(b"print('compila ma non e lo strumento')\n"))
+    assert sa.scarica_strumento("https://p/proxmox", "PXM-X") == ""
+    assert sa.versione_strumento(STRUMENTO_OK) == "2.1"
+    assert sa.versione_strumento("x = 1\n# VERSIONE_SCRIPT = 3\n") == ""
+
+
+def test_download_oltre_5mb_non_si_accetta(percorsi, monkeypatch):
+    grosso = (STRUMENTO_OK + "#" * (6 * 1024 * 1024)).encode()
+    monkeypatch.setattr(sa.urllib.request, "urlopen",
+                        lambda req, timeout=None: _Risposta(grosso))
+    assert sa.scarica_strumento("https://p/proxmox", "PXM-X") == ""
+
+
+def _config_portale(tmp, portale):
+    (tmp / "config.json").write_text(json.dumps({
+        "client": {"codcli": "ACME", "nomecliente": "Acme Srl"},
+        "survey": {"enabled": True, "portale": portale, "arruolamento": "SEGRETO-XYZ"}}))
+
+
+def test_portale_malformato_non_fa_uscire_il_codice(percorsi, monkeypatch):
+    tmp, avvisi = percorsi
+    _config_portale(tmp, "survey.domarc.it/proxmox")          # niente schema
+    sa.salva_codice("PXM-AAAA-BBBB-CCCC", "ACME", "")
+    monkeypatch.setattr(sa, "stato_cluster", lambda: [])
+    assert sa.main([]) == 1
+    log = open(sa.LOG).read()
+    assert "PXM-" not in log
+    assert all("PXM-" not in t for _, t in avvisi)
+
+
+def test_arruola_con_portale_malformato_non_espone_nulla(percorsi):
+    _, avvisi = percorsi
+    assert sa.arruola("survey.domarc.it/proxmox", "SEGRETO-XYZ", "ACME", "A", "", "n") == ""
+    assert "SEGRETO-XYZ" not in open(sa.LOG).read()
+
+
+def test_eccezione_imprevista_e_ripulita_da_codice_e_segreto(percorsi, monkeypatch):
+    tmp, avvisi = percorsi
+    _config_portale(tmp, "https://p/proxmox")
+    sa.salva_codice("PXM-AAAA-BBBB-CCCC", "ACME", "")
+    monkeypatch.setattr(sa, "stato_cluster", lambda: [])
+
+    def rompi(portale, codice):
+        raise RuntimeError("boom %s e SEGRETO-XYZ" % codice)
+    monkeypatch.setattr(sa, "scarica_strumento", rompi)
+    assert sa.main([]) == 1
+    tutto = open(sa.LOG).read() + " ".join(t for _, t in avvisi)
+    assert "PXM-AAAA" not in tutto and "SEGRETO-XYZ" not in tutto
+    assert "boom" in tutto
+
+
+def test_stato_cluster_ignoto_non_invia(percorsi, monkeypatch):
+    tmp, avvisi = percorsi
+    _config_portale(tmp, "https://p/proxmox")
+    sa.salva_codice("PXM-AAAA-BBBB-CCCC", "ACME", "")
+
+    def pvesh_rotto(*a, **k):
+        raise sa.subprocess.TimeoutExpired("pvesh", 60)
+    monkeypatch.setattr(sa.subprocess, "run", pvesh_rotto)
+    assert sa.stato_cluster() is None
+    chiamato = []
+    monkeypatch.setattr(sa.urllib.request, "urlopen", lambda *a, **k: chiamato.append(1))
+    monkeypatch.setattr(sa, "esegui", lambda *a: chiamato.append(2) or 0)
+    assert sa.main([]) == 0
+    assert chiamato == []
+    assert avvisi and avvisi[0][0] == "warning"
+    assert "sconosciuto" in open(sa.LOG).read()
+
+
+def _finto_alert_manager(monkeypatch, risultato):
+    import types
+    m = types.ModuleType("alert_manager")
+
+    class Sev:
+        WARNING = "w"
+        ERROR = "e"
+        CRITICAL = "c"
+
+    class Tipo:
+        CUSTOM = "custom"
+
+    class Gestore:
+        def __init__(self, cfg):
+            pass
+
+        def send_alert(self, *a, **k):
+            return risultato
+    m.AlertSeverity, m.AlertType, m.AlertManager = Sev, Tipo, Gestore
+    monkeypatch.setitem(sys.modules, "alert_manager", m)
+
+
+def test_allarme_non_consegnato_si_scrive_nel_log(tmp_path, monkeypatch):
+    monkeypatch.setattr(sa, "INSTALL", str(tmp_path))
+    monkeypatch.setattr(sa, "LOG", str(tmp_path / "s.log"))
+    _finto_alert_manager(monkeypatch, {"email": False, "syslog": False})
+    sa.avvisa("critical", "guasto X")
+    assert "allarme NON consegnato: critical guasto X" in open(sa.LOG).read()
+
+
+def test_allarme_consegnato_non_scrive_avviso_di_mancata_consegna(tmp_path, monkeypatch):
+    monkeypatch.setattr(sa, "INSTALL", str(tmp_path))
+    monkeypatch.setattr(sa, "LOG", str(tmp_path / "s.log"))
+    _finto_alert_manager(monkeypatch, {"email": False, "syslog": True})
+    sa.avvisa("critical", "guasto X")
+    assert not os.path.exists(sa.LOG) or "NON consegnato" not in open(sa.LOG).read()
