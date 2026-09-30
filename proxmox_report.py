@@ -3341,6 +3341,11 @@ class ProxmoxLocalExtractor:
 # CLASSE SFTP UPLOADER
 # ============================================================================
 
+# Porta NAT pubblica del primary (stesso valore di SFTP_PORT_DEFAULT in proxmox_core.py,
+# duplicato qui perche' proxmox_core importa questo modulo).
+SFTP_PUBLIC_NAT_PORT = 11122
+
+
 class SFTPUploader:
     """Gestore upload file via SFTP"""
     
@@ -3371,8 +3376,13 @@ class SFTPUploader:
             logger.error("Configurazione SFTP incompleta (mancano credenziali)")
             return False
         
+        # Ultimo errore di connessione: solo di rete (rifiuto, timeout, nessuna rotta)?
+        # Serve a decidere il ripiego 11122 -> 22; auth e protocollo NON contano.
+        last_error_is_network = [False]
+
         # Helper per tentare connessione
         def try_connect(target_host, target_port, user=username, pwd=password):
+            last_error_is_network[0] = False
             try:
                 self.ssh_client = paramiko.SSHClient()
                 self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -3381,17 +3391,37 @@ class SFTPUploader:
                 logger.info(f"  ✓ Connessione SFTP stabilita con {target_host}")
                 return True
             except Exception as e:
+                # NoValidConnectionsError, socket.timeout, ConnectionRefusedError... sono
+                # tutti OSError; AuthenticationException e SSHException NO (vanno esclusi
+                # per sicurezza), e un errore DNS non si cura cambiando porta.
+                last_error_is_network[0] = (
+                    isinstance(e, OSError)
+                    and not isinstance(e, socket.gaierror)
+                    and not isinstance(e, paramiko.SSHException)
+                )
                 logger.warning(f"  ⚠ Errore connessione SFTP verso {target_host}: {e}")
                 return False
 
         # Retry Logic Primary
         attempts = 3
         delay = 5
+        port_fallback_done = False
         
         for i in range(attempts):
             logger.info(f"Tentativo {i+1}/{attempts} verso Primary ({host})...")
             if try_connect(host, port, user=username, pwd=password):
                 return True
+
+            # La 11122 e' la porta NAT pubblica: dentro la rete aziendale il nome punta
+            # al server interno, che ascolta solo sulla 22. Se la 11122 non risponde a
+            # livello di rete, si prova subito la 22 sullo stesso host (una volta sola,
+            # senza attese). Niente ripiego su errori di autenticazione o di protocollo.
+            if (not port_fallback_done and last_error_is_network[0]
+                    and str(port) == str(SFTP_PUBLIC_NAT_PORT)):
+                port_fallback_done = True
+                if try_connect(host, 22, user=username, pwd=password):
+                    logger.info(f"porta {port} non raggiungibile su {host}: uso la 22")
+                    return True
             
             if i < attempts - 1:
                 logger.info(f"Attendo {delay}s prima di riprovare...")
