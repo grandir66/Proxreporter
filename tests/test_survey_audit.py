@@ -340,3 +340,73 @@ def test_allarme_consegnato_non_scrive_avviso_di_mancata_consegna(tmp_path, monk
     _finto_alert_manager(monkeypatch, {"email": False, "syslog": True})
     sa.avvisa("critical", "guasto X")
     assert not os.path.exists(sa.LOG) or "NON consegnato" not in open(sa.LOG).read()
+
+
+# ---- Task 8: sezione centralizzata e cron ----
+
+def test_il_merge_prende_dal_master_e_non_tocca_il_codice():
+    from remote_config import merge_remote_defaults
+    locale = {"client": {"codcli": "ACME"}, "survey": {"enabled": False, "portale": "http://vecchio"}}
+    remoto = {"survey": {"enabled": True, "portale": "https://survey.example/proxmox",
+                         "arruolamento": "segreto", "solo": ["ACME"]}}
+    unito = merge_remote_defaults(locale, remoto)
+    assert unito["survey"]["enabled"] is True
+    assert unito["survey"]["portale"] == "https://survey.example/proxmox"
+    assert unito["survey"]["solo"] == ["ACME"]
+    assert unito["client"]["codcli"] == "ACME"
+    assert "codice" not in unito["survey"]
+
+
+def test_senza_sezione_remota_il_locale_resta_com_e():
+    from remote_config import merge_remote_defaults
+    locale = {"survey": {"enabled": True, "portale": "https://survey.example/proxmox"}}
+    assert merge_remote_defaults(locale, {"syslog": {"host": "x"}})["survey"] == locale["survey"]
+
+
+def test_il_merge_non_logga_il_segreto_di_arruolamento(caplog):
+    import logging
+    from remote_config import merge_remote_defaults
+    with caplog.at_level(logging.DEBUG):
+        merge_remote_defaults({}, {"survey": {"enabled": True, "portale": "https://p",
+                                              "arruolamento": "SEGRETO-XYZ"}})
+    assert "SEGRETO-XYZ" not in caplog.text
+
+
+def test_la_riga_di_cron_non_si_duplica():
+    from update_scripts import riga_cron_survey, applica_cron
+    esistente = "0 6 * * * root /usr/bin/python3 /opt/proxreport/proxmox_core.py\n"
+    riga = riga_cron_survey("ACME")
+    uno = applica_cron(esistente, riga)
+    due = applica_cron(uno, riga)
+    assert uno == due
+    assert uno.count("survey_audit.py") == 1
+    assert "proxmox_core.py" in uno
+
+
+def test_survey_audit_viaggia_con_gli_script_aggiornati():
+    from update_scripts import SCRIPTS_TO_UPDATE
+    assert "survey_audit.py" in SCRIPTS_TO_UPDATE
+
+
+def test_setup_survey_cron_scrive_una_volta_e_sostituisce(tmp_path, capsys):
+    from update_scripts import setup_survey_cron
+    cron = tmp_path / "proxreporter-survey"
+    cfg = {"client": {"codcli": "ACME"}}
+    assert setup_survey_cron(tmp_path, cfg, cron_file=cron) is True
+    primo = cron.read_text()
+    assert primo.count("survey_audit.py") == 1
+    mtime = cron.stat().st_mtime_ns
+    assert setup_survey_cron(tmp_path, cfg, cron_file=cron) is True
+    assert cron.read_text() == primo
+    assert cron.stat().st_mtime_ns == mtime            # non riscritto
+    assert setup_survey_cron(tmp_path, {"client": {"codcli": "BETA"}}, cron_file=cron) is True
+    nuovo = cron.read_text()
+    assert nuovo != primo and nuovo.count("survey_audit.py") == 1
+
+
+def test_setup_survey_cron_senza_codcli_non_scrive(tmp_path):
+    from update_scripts import setup_survey_cron
+    cron = tmp_path / "proxreporter-survey"
+    assert setup_survey_cron(tmp_path, {"client": {"codcli": ""}}, cron_file=cron) is False
+    assert setup_survey_cron(tmp_path, {}, cron_file=cron) is False
+    assert not cron.exists()

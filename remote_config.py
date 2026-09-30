@@ -329,6 +329,21 @@ def merge_remote_defaults(local_config: Dict[str, Any], remote_config: Dict[str,
         merged["pve_monitor"] = local_pve
         logger.debug("PVE Monitor sincronizzato da configurazione remota")
     
+    # Sezione Survey - il server remoto ha precedenza: è la leva con cui si
+    # accende (e si spegne) tutta la flotta senza entrare su un nodo. Il codice
+    # emesso dal portale NON è qui: sta in .survey_codice, perché config.json
+    # viene riscritto dall'installer "managed" e da save_merged_config.
+    if "survey" in remote_config:
+        local_survey = merged.get("survey", {})
+        for key in ("enabled", "portale", "arruolamento", "solo"):
+            value = remote_config["survey"].get(key)
+            if value is not None:
+                local_survey[key] = value
+        merged["survey"] = local_survey
+        # Mai loggare "arruolamento": è un segreto
+        logger.info("Survey sincronizzato: %s (enabled=%s)",
+                    local_survey.get("portale"), local_survey.get("enabled"))
+
     return merged
 
 
