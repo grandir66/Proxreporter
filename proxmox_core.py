@@ -369,6 +369,10 @@ DEFAULT_SMTP_USER = "smtp.domarc"
 DEFAULT_SMTP_ENCRYPTION = "starttls"
 DEFAULT_FROM_ADDRESS = "px-@domarc.it"
 DEFAULT_RECIPIENT = "domarcsrl+pxbackup@mycheckcentral.cc"
+# Dal 2026-10-05 (Riccardo) anche proxmox@domarc.it riceve le notifiche dei backup,
+# accanto a mycheckcentral che ne controlla gli esiti: si aggiunge, non si sostituisce.
+DOMARC_RECIPIENT = "proxmox@domarc.it"
+DEFAULT_RECIPIENTS = [DEFAULT_RECIPIENT, DOMARC_RECIPIENT]
 # Password SMTP - lasciare vuoto
 DEFAULT_SMTP_PASSWORD = ""
 
@@ -538,7 +542,7 @@ def configure_smtp_notification(
             pvesh_cmd = (
                 f"pvesh create /cluster/notifications/endpoints/smtp "
                 f"--name '{target_name}' "
-                f"--mailto '{DEFAULT_RECIPIENT}' "
+                + "".join(f"--mailto '{r}' " for r in DEFAULT_RECIPIENTS) +
                 f"--server '{DEFAULT_SMTP_SERVER}' "
                 f"--port {DEFAULT_SMTP_PORT} "  # Numero senza virgolette
                 f"--user '{DEFAULT_SMTP_USER}' "
@@ -577,7 +581,7 @@ def configure_smtp_notification(
                 result = subprocess.run([
                     "pvesh", "create", "/cluster/notifications/endpoints/smtp",
                     "--name", target_name,
-                    "--mailto", DEFAULT_RECIPIENT,
+                    *[a for r in DEFAULT_RECIPIENTS for a in ("--mailto", r)],
                     "--server", DEFAULT_SMTP_SERVER,
                     "--port", str(DEFAULT_SMTP_PORT),
                     "--user", DEFAULT_SMTP_USER,
@@ -790,80 +794,58 @@ def configure_backup_jobs_notification(
             except Exception:
                 pass
         
-        # Aggiorna il target con tutte le email raccolte
+        # Il target riceve gli indirizzi dei job più i destinatari predefiniti, e
+        # tiene quelli che ha già: si aggiunge, non si toglie mai. Fino al 2026-10-05
+        # questo passo usava /endpoints/<nome> (Proxmox: «No 'get' handler») e girava
+        # solo se i job avevano email, quindi non aggiornava mai niente; e se la
+        # lettura falliva avrebbe riscritto il target perdendo gli indirizzi presenti.
         if all_emails:
             logger.info(f"  Email trovate nei backup jobs: {', '.join(sorted(all_emails))}")
-            logger.info(f"  → Aggiunta al notification target...")
-            
-            # Recupera mailto attuale del target
-            if execution_mode == "ssh" and executor:
-                get_mailto_cmd = f"pvesh get /cluster/notifications/endpoints/{target_name} --output-format json 2>/dev/null"
-                mailto_result = executor(get_mailto_cmd)
-                if mailto_result:
-                    try:
-                        target_config = json.loads(mailto_result)
-                        current_target_mailto = target_config.get("mailto", "")
-                        if isinstance(current_target_mailto, list):
-                            current_target_mailto = ",".join(current_target_mailto)
-                    except json.JSONDecodeError:
-                        current_target_mailto = ""
-                else:
-                    current_target_mailto = ""
-            else:
-                try:
-                    result = subprocess.run(
-                        ["pvesh", "get", f"/cluster/notifications/endpoints/{target_name}", "--output-format", "json"],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if result.returncode == 0:
-                        target_config = json.loads(result.stdout)
-                        current_target_mailto = target_config.get("mailto", "")
-                        if isinstance(current_target_mailto, list):
-                            current_target_mailto = ",".join(current_target_mailto)
-                    else:
-                        current_target_mailto = ""
-                except Exception:
-                    current_target_mailto = ""
-            
-            # Aggiungi le nuove email
-            if current_target_mailto:
-                for email in current_target_mailto.split(","):
-                    email = email.strip()
-                    if email:
-                        all_emails.add(email)
-            
-            # Aggiorna il target
-            final_mailto = ",".join(sorted(all_emails))
-            
-            if execution_mode == "ssh" and executor:
-                update_mailto_cmd = f"pvesh set /cluster/notifications/endpoints/{target_name} --mailto '{final_mailto}' 2>&1"
-                update_mailto_result = executor(update_mailto_cmd)
-                mailto_success = update_mailto_result is not None and "error" not in (update_mailto_result.lower() if update_mailto_result else "")
-            else:
-                try:
-                    result = subprocess.run(
-                        ["pvesh", "set", f"/cluster/notifications/endpoints/{target_name}", "--mailto", final_mailto],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    mailto_success = result.returncode == 0
-                except Exception:
-                    mailto_success = False
-            
-            if mailto_success:
-                logger.info(f"  ✓ Email aggiunte al target")
-                for email in sorted(all_emails):
-                    logger.info(f"    • {email}")
-            else:
-                logger.info(f"  ⚠ Possibile errore nell'aggiornamento delle email")
-            
-            logger.info("")
         else:
             logger.info(f"  ℹ Nessuna email trovata nei backup job esistenti")
-            logger.info("")
+        percorso = f"/cluster/notifications/endpoints/smtp/{target_name}"
+        attuali = None                      # None = non leggibile: allora non si scrive
+        try:
+            if execution_mode == "ssh" and executor:
+                letto = executor(f"pvesh get {percorso} --output-format json 2>/dev/null")
+            else:
+                r = subprocess.run(["pvesh", "get", percorso, "--output-format", "json"],
+                                   capture_output=True, text=True, timeout=5)
+                letto = r.stdout if r.returncode == 0 else None
+            if letto:
+                valore = json.loads(letto).get("mailto", [])
+                if isinstance(valore, str):
+                    valore = valore.split(",")
+                attuali = {e.strip() for e in valore if e.strip()}
+        except Exception:
+            attuali = None
+        if attuali is None:
+            logger.info(f"  ⚠ Destinatari del target {target_name} non leggibili: nessuna modifica")
+        else:
+            all_emails |= attuali | set(DEFAULT_RECIPIENTS)
+            mancanti = all_emails - attuali
+            if not mancanti:
+                logger.info(f"  ✓ Destinatari del target già completi ({len(attuali)})")
+            else:
+                logger.info(f"  → Aggiunta al notification target: {', '.join(sorted(mancanti))}")
+                argomenti = [a for e in sorted(all_emails) for a in ("--mailto", e)]
+                if execution_mode == "ssh" and executor:
+                    esito = executor(f"pvesh set {percorso} " + " ".join(f"{a} '{v}'" for a, v in zip(argomenti[::2], argomenti[1::2])) + " 2>&1")
+                    mailto_success = esito is not None and "error" not in (esito or "").lower() and "no '" not in (esito or "").lower()
+                else:
+                    try:
+                        r = subprocess.run(["pvesh", "set", percorso, *argomenti],
+                                           capture_output=True, text=True, timeout=5)
+                        mailto_success = r.returncode == 0
+                    except Exception:
+                        mailto_success = False
+                if mailto_success:
+                    logger.info(f"  ✓ Email aggiunte al target")
+                    for email in sorted(all_emails):
+                        logger.info(f"    • {email}")
+                else:
+                    logger.info(f"  ⚠ Aggiornamento dei destinatari non riuscito")
+        logger.info("")
         
         logger.info("=" * 70)
         logger.info(f"  ✓ CONFIGURAZIONE COMPLETATA")
