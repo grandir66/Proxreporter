@@ -14,6 +14,7 @@ Proprietario: Domarc SRL
 Copyright (c) 2024-2026 Domarc SRL - Tutti i diritti riservati.
 """
 
+import copy
 import json
 import logging
 import os
@@ -221,6 +222,12 @@ def sync_remote_config(config: Dict[str, Any], config_file: Path) -> Dict[str, A
         logger.debug("Nessuna configurazione remota disponibile")
         return config
     
+    # Fotografia prima della fusione: merge_remote_defaults fa una copia
+    # superficiale e modifica le sezioni sul posto, quindi confrontare con
+    # `config` dopo la fusione dava sempre «uguale» e il file non si salvava mai
+    # (2026-10-05: DA-PX-01 mandava ancora a proxreporter@ invece di proxmox@).
+    prima = copy.deepcopy(config)
+    
     # Merge
     merged_config = merge_remote_defaults(config, remote_config)
     
@@ -229,7 +236,7 @@ def sync_remote_config(config: Dict[str, Any], config_file: Path) -> Dict[str, A
     
     # Controlla sezioni chiave per modifiche
     for section in ['syslog', 'smtp', 'alerts', 'hardware_monitoring', 'hardware_thresholds', 'pve_monitor', 'survey']:
-        if merged_config.get(section) != config.get(section):
+        if merged_config.get(section) != prima.get(section):
             config_changed = True
             logger.debug(f"Sezione '{section}' aggiornata dalla config remota")
     
