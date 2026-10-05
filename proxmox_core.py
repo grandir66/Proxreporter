@@ -507,7 +507,9 @@ def configure_smtp_notification(
         if exec_mode == "ssh" and exec_func:
             check_cmd = f'pvesh get /cluster/notifications/endpoints/{target_name} 2>/dev/null && echo "EXISTS" || echo "NOT_EXISTS"'
             result = exec_func(check_cmd)
-            return result and "EXISTS" in result
+            # "NOT_EXISTS" contiene "EXISTS": senza escluderlo il target risulta
+            # sempre presente e in modalità ssh non viene mai creato.
+            return bool(result) and "EXISTS" in result and "NOT_EXISTS" not in result
         elif exec_mode == "local":
             try:
                 result = subprocess.run(
