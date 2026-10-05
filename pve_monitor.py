@@ -35,6 +35,37 @@ except ImportError:
 logger = logging.getLogger("proxreporter")
 
 
+def esito_task_vzdump(task: Dict[str, Any]) -> Optional[tuple]:
+    """Esito di un task vzdump dall'elenco ``/nodes/<nodo>/tasks``.
+
+    Restituisce ``(stato, testo)`` con stato ``success``/``warning``/``failed``,
+    oppure ``None`` se il task è ancora in corso.
+
+    Perché (2026-10-05): l'elenco dei task di Proxmox NON ha il campo
+    ``exitstatus`` (c'è solo in ``/tasks/<upid>/status``): l'esito sta in
+    ``status`` — ``OK``, ``WARNINGS: n`` o il testo dell'errore. Leggendo
+    ``exitstatus`` ogni job risultava «warning»: in Graylog 4.858
+    PVE_BACKUP_RESULT in 7 giorni su 31 clienti, tutti «warning», con
+    ``exit_status`` vuoto. Così un backup fallito e uno riuscito erano uguali.
+    """
+    testo = str(task.get("exitstatus") or "").strip()
+    if not testo:
+        stato = str(task.get("status") or "").strip()
+        if stato.lower() in ("", "running", "stopped"):
+            # In corso (niente fine) oppure fine senza esito leggibile.
+            if not task.get("endtime") or stato.lower() == "running":
+                return None
+            return "warning", stato
+        testo = stato
+    if testo == "OK":
+        return "success", testo
+    if testo.upper().startswith("WARNINGS"):
+        return "warning", testo
+    # Ogni altro esito finale di Proxmox è il testo di un errore
+    # («job errors», «unable to ...», «interrupted by signal»).
+    return "failed", testo
+
+
 class PVESyslogSender:
     """Invia messaggi syslog RFC 5424 o GELF via TCP/UDP per PVE Monitor"""
 
@@ -762,7 +793,11 @@ class PVEMonitor:
             tasks = pvesh_get(f"/nodes/{self.node}/tasks", typefilter="vzdump", since=str(since),
                               limit="500", source="all")
 
-            completed = [t for t in tasks if t.get("status") != "running"]
+            completed = []
+            for t in tasks:
+                esito = esito_task_vzdump(t)
+                if esito is not None:
+                    completed.append((t, esito))
             logger.info(f"    Trovati {len(completed)} task vzdump completati")
 
             # Pre-carica nomi VM dal cluster (una sola chiamata API) per evitare N chiamate individuali
@@ -779,22 +814,14 @@ class PVEMonitor:
 
             jobs_dict = {}
             
-            for task in completed:
+            for task, (status, exitstatus) in completed:
                 starttime = task.get("starttime", 0)
                 endtime = task.get("endtime", 0)
                 duration = endtime - starttime if endtime and starttime else 0
                 vmid = task.get("id", "")
                 upid = task.get("upid", "")
                 user = task.get("user", "")
-                exitstatus = task.get("exitstatus", "")
-                
-                if exitstatus == "OK":
-                    status = "success"
-                elif "error" in str(exitstatus).lower():
-                    status = "failed"
-                else:
-                    status = "warning"
-                
+
                 vm_info = vm_names.get(str(vmid), {})
                 vm_name = vm_info.get("name", f"VM-{vmid}")
                 vm_type = vm_info.get("type", "unknown")
@@ -829,7 +856,15 @@ class PVEMonitor:
                 jobs_dict[job_key]["task_ids"].append(upid)
             
             jobs_sent = 0
-            success_jobs = []
+
+            # Ogni job va a Graylog col suo esito, anche quando è riuscito
+            # (2026-10-05). Chi giudica i backup (Monitor del Manager e di
+            # INTEGRA, DA-Backup) deve vedere il successo di OGNI job: senza,
+            # un job che non è partito e uno riuscito sono lo stesso silenzio.
+            # Il riepilogo PVE_BACKUP_RESULT_SUMMARY non serve più, e
+            # `send_backup_result_on_success` non decide più niente. Il volume
+            # resta quello di prima: finché l'esito si leggeva male, ogni job
+            # risultava «warning» e partiva comunque.
             
             for job_key, job_data in jobs_dict.items():
                 vms = job_data["vms"]
@@ -848,49 +883,24 @@ class PVEMonitor:
                 else:
                     job_status = "success"
                 
-                if job_status in ("failed", "warning") or self.send_backup_result_on_success or test_mode:
-                    data = {
-                        "status": job_status,
-                        "job_start_time": datetime.fromtimestamp(start_time, tz=timezone.utc).isoformat() if start_time else None,
-                        "job_end_time": datetime.fromtimestamp(end_time, tz=timezone.utc).isoformat() if end_time else None,
-                        "job_duration_seconds": job_duration,
-                        "job_duration_minutes": round(job_duration / 60, 1),
-                        "user": job_data["user"],
-                        "vm_count": len(vms),
-                        "vms_success": vms_success,
-                        "vms_warning": vms_warning,
-                        "vms_failed": vms_failed,
-                        "vms": vms,
-                        "task_ids": job_data["task_ids"]
-                    }
-                    if self.syslog:
-                        self.syslog.send("PVE_BACKUP_RESULT", data, test_mode)
-                        jobs_sent += 1
-                elif job_status == "success":
-                    success_jobs.append({
-                        "user": job_data["user"],
-                        "vm_count": len(vms),
-                        "start_time": start_time,
-                        "end_time": end_time,
-                    })
-            
-            # Un messaggio accumulativo per tutti i successi
-            if success_jobs and self.syslog:
-                total_vms = sum(j["vm_count"] for j in success_jobs)
-                first_start = min(j["start_time"] for j in success_jobs)
-                last_end = max(j["end_time"] for j in success_jobs)
-                users = list({j["user"] for j in success_jobs})
-                summary_data = {
-                    "status": "success",
-                    "job_count": len(success_jobs),
-                    "vm_count": total_vms,
-                    "first_start": datetime.fromtimestamp(first_start, tz=timezone.utc).isoformat() if first_start else None,
-                    "last_end": datetime.fromtimestamp(last_end, tz=timezone.utc).isoformat() if last_end else None,
-                    "users": users,
+                data = {
+                    "status": job_status,
+                    "job_start_time": datetime.fromtimestamp(start_time, tz=timezone.utc).isoformat() if start_time else None,
+                    "job_end_time": datetime.fromtimestamp(end_time, tz=timezone.utc).isoformat() if end_time else None,
+                    "job_duration_seconds": job_duration,
+                    "job_duration_minutes": round(job_duration / 60, 1),
+                    "user": job_data["user"],
+                    "vm_count": len(vms),
+                    "vms_success": vms_success,
+                    "vms_warning": vms_warning,
+                    "vms_failed": vms_failed,
+                    "vms": vms,
+                    "task_ids": job_data["task_ids"]
                 }
-                self.syslog.send("PVE_BACKUP_RESULT_SUMMARY", summary_data, test_mode)
-                jobs_sent += 1
-            
+                if self.syslog:
+                    self.syslog.send("PVE_BACKUP_RESULT", data, test_mode)
+                    jobs_sent += 1
+
             logger.info(f"    Processati {len(jobs_dict)} job di backup ({jobs_sent} messaggi inviati)")
             return {"sent": True, "jobs": len(jobs_dict), "tasks": len(completed)}
         except Exception as e:
@@ -1270,11 +1280,12 @@ class PVEMonitor:
             tasks = pvesh_get(f"/nodes/{self.node}/tasks", typefilter="vzdump", since=str(since),
                               limit="500", source="all")
             
-            completed = [t for t in tasks if t.get("status") == "stopped"]
-            
-            success_count = sum(1 for t in completed if t.get("exitstatus") == "OK")
-            failed_count = sum(1 for t in completed if "error" in str(t.get("exitstatus", "")).lower())
-            warning_count = len(completed) - success_count - failed_count
+            esiti = [e for e in (esito_task_vzdump(t) for t in tasks) if e is not None]
+            completed = esiti
+
+            success_count = sum(1 for stato, _ in esiti if stato == "success")
+            failed_count = sum(1 for stato, _ in esiti if stato == "failed")
+            warning_count = len(esiti) - success_count - failed_count
             
             overall = "failed" if failed_count > 0 else "warning" if warning_count > 0 else "success"
             
