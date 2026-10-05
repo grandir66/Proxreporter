@@ -37,6 +37,7 @@ SCRIPTS_TO_UPDATE = [
     "hardware_monitor.py",
     "pve_monitor.py",
     "heartbeat.py",
+    "survey_audit.py",
     "version.py",
     "test_alerts.py",
     "templates/report.html.j2",
@@ -392,6 +393,18 @@ def post_update_tasks(install_dir: Path, was_updated: bool) -> None:
     
     # 3. Configura cron heartbeat se non presente
     setup_heartbeat_cron(install_dir)
+
+    # 4. Cron settimanale della survey (config riletta dopo il download del master)
+    if config_file.exists():
+        try:
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+        except Exception:
+            pass
+    try:
+        setup_survey_cron(install_dir, config)
+    except Exception as e:
+        print(f"  ⚠ Cron survey non configurato: {type(e).__name__}: {e}")
     
     print("✓ Configurazione automatica completata")
 
@@ -451,6 +464,86 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
         return False
     except Exception as e:
         print(f"  ⚠ Errore configurazione cron heartbeat: {e}")
+        return False
+
+
+SURVEY_CRON_FILE = Path("/etc/cron.d/proxreporter-survey")
+
+
+def riga_cron_survey(codcli, install_dir=Path("/opt/proxreport")):
+    """Settimanale, all'istante che tocca a questo cliente. Il percorso dello
+    script viene da install_dir, come per l'heartbeat."""
+    from survey_audit import pianificazione
+    minuto, ora, giorno = pianificazione(codcli)
+    return (f"{minuto} {ora} * * {giorno} root /usr/bin/python3 {Path(install_dir) / 'survey_audit.py'}"
+            " >> /var/log/proxreporter/survey.log 2>&1\n")
+
+
+def applica_cron(contenuto, riga):
+    """Sostituisce la riga di survey se c'è, la aggiunge se manca. Riconosce la
+    propria riga dal nome dello script: la pianificazione cambia se cambia il
+    codcli, quindi confrontare la riga intera non basta."""
+    righe = [r for r in contenuto.splitlines(keepends=True) if "survey_audit.py" not in r]
+    return "".join(righe) + riga
+
+
+def setup_survey_cron(install_dir: Path, config: Dict[str, Any],
+                      cron_file: Path = SURVEY_CRON_FILE) -> bool:
+    """
+    Scrive il cron settimanale di survey_audit.py in un file suo in /etc/cron.d/.
+    La riga c'è a prescindere da survey.enabled: l'interruttore è nel master
+    config, letto dall'agente a ogni giro.
+
+    Returns:
+        True se configurato o già corretto
+    """
+    codcli = ((config or {}).get("client") or {}).get("codcli") or ""
+    if not str(codcli).strip():
+        print("  ℹ codcli non configurato, skip cron survey")
+        return False
+
+    # Senza lo script la riga farebbe fallire il cron ogni settimana in silenzio
+    if not (Path(install_dir) / "survey_audit.py").exists():
+        print(f"  ⚠ {Path(install_dir) / 'survey_audit.py'} non presente, cron survey non scritto")
+        return False
+
+    # Un guasto qui (import, pianificazione) non deve far cadere l'aggiornamento
+    try:
+        riga = riga_cron_survey(codcli, install_dir)
+    except Exception as e:
+        print(f"  ⚠ Cron survey non configurato: {type(e).__name__}: {e}")
+        return False
+
+    try:
+        esistente = cron_file.read_text() if cron_file.exists() else ""
+    except Exception:
+        esistente = ""
+    if esistente:
+        contenuto = applica_cron(esistente, riga)
+    else:
+        contenuto = ("# Proxreporter Survey - verifica settimanale del cluster\n"
+                     "# Generato automaticamente da update_scripts.py\n"
+                     "SHELL=/bin/bash\n"
+                     "PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n\n"
+                     + riga)
+    if contenuto == esistente:
+        print("  ✓ Cron survey già configurato")
+        return True
+
+    try:
+        Path("/var/log/proxreporter").mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    try:
+        cron_file.write_text(contenuto)
+        os.chmod(cron_file, 0o644)
+        print(f"  ✓ Cron survey configurato: {cron_file}")
+        return True
+    except PermissionError:
+        print("  ⚠ Permessi insufficienti per creare cron survey")
+        return False
+    except Exception as e:
+        print(f"  ⚠ Errore configurazione cron survey: {e}")
         return False
 
 
