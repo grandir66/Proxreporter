@@ -471,11 +471,13 @@ SURVEY_CRON_FILE = Path("/etc/cron.d/proxreporter-survey")
 
 
 def riga_cron_survey(codcli, install_dir=Path("/opt/proxreport")):
-    """Settimanale, all'istante che tocca a questo cliente. Il percorso dello
-    script viene da install_dir, come per l'heartbeat."""
+    """Ogni notte, all'ora che tocca a questo cliente: il giorno della
+    settimana lo decide l'agente (survey_audit.oggi_tocca), così il primo invio
+    parte la notte stessa. Il percorso dello script viene da install_dir, come
+    per l'heartbeat."""
     from survey_audit import pianificazione
-    minuto, ora, giorno = pianificazione(codcli)
-    return (f"{minuto} {ora} * * {giorno} root /usr/bin/python3 {Path(install_dir) / 'survey_audit.py'}"
+    minuto, ora, _giorno = pianificazione(codcli)
+    return (f"{minuto} {ora} * * * root /usr/bin/python3 {Path(install_dir) / 'survey_audit.py'}"
             " >> /var/log/proxreporter/survey.log 2>&1\n")
 
 
@@ -490,7 +492,7 @@ def applica_cron(contenuto, riga):
 def setup_survey_cron(install_dir: Path, config: Dict[str, Any],
                       cron_file: Path = SURVEY_CRON_FILE) -> bool:
     """
-    Scrive il cron settimanale di survey_audit.py in un file suo in /etc/cron.d/.
+    Scrive il cron notturno di survey_audit.py in un file suo in /etc/cron.d/.
     La riga c'è a prescindere da survey.enabled: l'interruttore è nel master
     config, letto dall'agente a ogni giro.
 
@@ -521,7 +523,7 @@ def setup_survey_cron(install_dir: Path, config: Dict[str, Any],
     if esistente:
         contenuto = applica_cron(esistente, riga)
     else:
-        contenuto = ("# Proxreporter Survey - verifica settimanale del cluster\n"
+        contenuto = ("# Proxreporter Survey - verifica settimanale del cluster (cron notturno, il giorno lo decide l'agente)\n"
                      "# Generato automaticamente da update_scripts.py\n"
                      "SHELL=/bin/bash\n"
                      "PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n\n"

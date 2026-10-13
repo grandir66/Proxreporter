@@ -75,6 +75,18 @@ def tocca_a_me(stato_cluster, hostname):
     return (not online) or online[0] == hostname
 
 
+def oggi_tocca(stato, adesso, codcli, recupero_giorni=8):
+    """Il cron gira ogni notte; si invia nel giorno della pianificazione. Due
+    eccezioni: chi non ha mai inviato con successo invia alla prima notte (un
+    cliente appena acceso non aspetta una settimana), e chi non invia da più di
+    `recupero_giorni` recupera alla notte dopo invece di perdere un giro."""
+    ultimo = stato.get("ultimo_invio")
+    if not ultimo or (adesso - float(ultimo)) >= recupero_giorni * 86400:
+        return True
+    giorno_cron = (time.localtime(adesso).tm_wday + 1) % 7     # cron: 0 = domenica
+    return giorno_cron == pianificazione(codcli)[2]
+
+
 def troppo_presto(stato, adesso, giorni=3):
     """Un invio riuscito da meno di tre giorni ferma l'esecuzione: protegge da
     un cron rimasto doppio e dalla settimana in cui due nodi si credono
@@ -433,6 +445,9 @@ def _esegui_agente():
     st = leggi_stato()
     if troppo_presto(st, adesso):
         log("ultimo invio riuscito da meno di 3 giorni: esco")
+        return 0
+    if not oggi_tocca(st, adesso, codcli):
+        log("non è il giorno della verifica settimanale: esco")
         return 0
 
     codice = codice_salvato()

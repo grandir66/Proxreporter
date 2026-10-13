@@ -634,3 +634,40 @@ def test_cron_senza_script_non_scrive_il_file(tmp_path, capsys):
 def test_cron_usa_install_dir(tmp_path):
     import update_scripts as us
     assert str(tmp_path / "survey_audit.py") in us.riga_cron_survey("ACME", tmp_path)
+
+
+# Il cron gira ogni notte; l'agente decide se oggi è il suo giorno. Prima
+# (13/10) il cron era settimanale: un cliente acceso per la prima volta
+# aspettava fino a 7 giorni, e un invio fallito ne perdeva altri 7.
+def _istante(giorno_cron, ora=3):
+    """Un istante locale nel giorno della settimana `giorno_cron` (0=domenica)."""
+    import time as _t
+    base = _t.mktime((2026, 10, 11, ora, 0, 0, 0, 0, -1))   # domenica 11/10/2026
+    return base + giorno_cron * 86400
+
+
+def test_il_cron_della_survey_e_giornaliero():
+    from update_scripts import riga_cron_survey
+    campi = riga_cron_survey("ACME").split()
+    assert campi[2:5] == ["*", "*", "*"]
+
+
+def test_mai_inviato_invia_la_prima_notte_qualunque_giorno():
+    _, _, giorno = sa.pianificazione("ACME")
+    for g in range(7):
+        assert sa.oggi_tocca({}, _istante(g), "ACME") is True
+    assert sa.oggi_tocca({"ultimo_invio": None}, _istante((giorno + 1) % 7), "ACME") is True
+
+
+def test_dopo_il_primo_invio_si_torna_al_proprio_giorno():
+    _, _, giorno = sa.pianificazione("ACME")
+    adesso = _istante(giorno)
+    assert sa.oggi_tocca({"ultimo_invio": adesso - 7 * 86400}, adesso, "ACME") is True
+    altro = _istante((giorno + 2) % 7)
+    assert sa.oggi_tocca({"ultimo_invio": altro - 5 * 86400}, altro, "ACME") is False
+
+
+def test_un_invio_saltato_si_recupera_la_notte_dopo():
+    _, _, giorno = sa.pianificazione("ACME")
+    domani = _istante((giorno + 1) % 7)
+    assert sa.oggi_tocca({"ultimo_invio": domani - 8 * 86400}, domani, "ACME") is True
