@@ -344,10 +344,17 @@ def merge_remote_defaults(local_config: Dict[str, Any], remote_config: Dict[str,
         # Copia: merged e' una copia superficiale, e modificare la sezione sul
         # posto la renderebbe sempre uguale a se stessa nel confronto di sync.
         local_survey = dict(merged.get("survey") or {})
+        # Il master può essere parziale (basta `enabled: false` per spegnere, e il
+        # nodo tiene il suo `portale`): una chiave assente non si tocca. Tranne
+        # `solo`, che restringe: senza elenco al centro non c'è restrizione, e un
+        # elenco vecchio rimasto sul nodo la spegne in silenzio. Successo il
+        # 13/10: `solo` tolto dal master, 35 agenti su 44 muti per cinque giorni.
         for key in ("enabled", "portale", "arruolamento", "solo"):
             value = remote_config["survey"].get(key)
             if value is not None:
                 local_survey[key] = value
+            elif key == "solo":
+                local_survey.pop("solo", None)
         merged["survey"] = local_survey
         # Mai loggare "arruolamento": è un segreto
         logger.info("Survey sincronizzato: %s (enabled=%s)",
