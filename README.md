@@ -561,3 +561,32 @@ To change configuration for all clients:
 
 Questo software e il relativo codice sorgente sono di proprietà esclusiva di Domarc SRL.
 L'utilizzo, la riproduzione o la distribuzione non autorizzata sono vietati.
+
+## Esecutore remoto su base Linux (DA-Link)
+
+`remote_runner.py` consente una sola installazione sulla base appliance/VM e
+raccolte SSH seriali da1–16 host. Il Manager genera template e cron dedicati;
+accessi e chiavi host si inseriscono **sulla base**, mai nel modulo web.
+Nessun codice viene installato sui nodi. Password facoltativamente cifrate con la
+chiave locale0600; file e template0600, cartella padre0700. I file precedenti
+vengono conservati durante una nuova configurazione; solo gli host elencati nel
+template corrente vengono eseguiti. Per ruotare un accesso si aggiorna il suo
+file protetto sulla base; non rigenerare la chiave `.secret.key` esistente.
+
+La chiave pubblica del server SSH va verificata con il cliente e fornita al
+configuratore locale. Connessioni con chiavi sconosciute/cambiate falliscono.
+Il profilo forza SSH anche su una base Proxmox, non modifica SMTP/template di
+notifica dei nodi e non usa il merge della configurazione centrale del vecchio CLI.
+Un host fallito non impedisce il successivo; il giro termina con errore se almeno
+un host non riesce. Nessun aggiornamento automatico dei sorgenti durante le raccolte.
+
+```bash
+cd /opt/proxreport-remote
+.venv/bin/python remote_runner.py configure --template /etc/proxreporter/remoto-71734/template.json
+.venv/bin/python remote_runner.py run --template /etc/proxreporter/remoto-71734/template.json
+```
+
+Il percorso remoto copre il report di `run_report`. La survey separata
+`survey_audit.py`, i relativi cron e l’arruolamento non vengono attivati da questo
+bootstrap: richiedono adattamento e collaudo specifici per esecuzione remota.
+Collaudo disponibile: `bash scripts/controlla.sh`, senza host o servizi reali.

@@ -286,6 +286,13 @@ class ProxmoxLocalExtractor:
         """Rileva se siamo su host Proxmox o remoto"""
         logger.info("→ Rilevamento modalità esecuzione...")
         
+        # Profilo esplicito del collettore: mai ripiegare sui dati della base.
+        if self.config and self.config.get('execution_mode') == 'ssh':
+            if not self.config.get('ssh', {}).get('host'):
+                raise ValueError('host SSH remoto mancante')
+            self.execution_mode = 'ssh'
+            return 'ssh'
+
         # Verifica se siamo su host Proxmox
         proxmox_indicators = [
             '/etc/pve',  # Directory Proxmox
@@ -321,7 +328,12 @@ class ProxmoxLocalExtractor:
         
         try:
             self.ssh_client = paramiko.SSHClient()
-            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            strict = ssh_config.get('host_key_policy') == 'reject'
+            if strict:
+                self.ssh_client.load_host_keys(ssh_config['known_hosts_file'])
+                self.ssh_client.set_missing_host_key_policy(paramiko.RejectPolicy())
+            else:
+                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
             host = ssh_config.get('host')
             port = ssh_config.get('port', 22)
@@ -329,11 +341,16 @@ class ProxmoxLocalExtractor:
             password = ssh_config.get('password', '')
             
             logger.info(f"  → Connessione SSH a {host}:{port}...")
-            self.ssh_client.connect(host, port=port, username=username, password=password, timeout=30)
+            auth = {}
+            if strict:
+                auth = {'key_filename': ssh_config.get('key_file'),
+                        'look_for_keys': False, 'allow_agent': False}
+            self.ssh_client.connect(host, port=port, username=username, password=password,
+                                    timeout=30, **auth)
             logger.info(f"  ✓ Connessione SSH stabilita")
             return True
         except Exception as e:
-            logger.info(f"  ✗ Errore connessione SSH: {e}")
+            logger.info("  ✗ Errore connessione SSH: %s", type(e).__name__)
             return False
     
     def execute_remote_command(self, command, silent=False):

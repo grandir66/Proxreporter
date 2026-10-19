@@ -9,3 +9,5 @@ config.json
 .secret.key
 .remote_defaults.json
 server_config/
+
+.venv/
