@@ -235,3 +235,32 @@ def test_codici_esito_sono_quelli_del_contratto():
     assert set(rr.ESITI) == {'riuscita', 'accesso_rifiutato', 'chiave_host_cambiata',
                              'host_irraggiungibile', 'chiave_privata_mancante', 'errore_ssh',
                              'raccolta_fallita', 'non_configurato'}
+
+
+def test_porta_cambiata_con_la_stessa_chiave_non_e_chiave_cambiata(tmp_path, server):
+    # Revisione 19/10: sshd spostato su un'altra porta, stessa chiave dell'host.
+    t, a = _base(tmp_path, server.porta)
+    rr.configure(t)
+    altro = ServerSSH()
+    altro.chiave = server.chiave
+    try:
+        _base(tmp_path, altro.porta)
+        rr.configure(t)
+        assert rr.run_all(t, report=Mock()) == 0
+        assert _esito(tmp_path)['127.0.0.1']['esito'] == 'riuscita'
+    finally:
+        altro.chiudi()
+
+
+def test_passando_a_password_la_chiave_privata_di_prima_sparisce(tmp_path, server):
+    t, a = _base(tmp_path, server.porta)
+    acc = rr.read_private(a)
+    acc['host']['127.0.0.1'] = {'porta': server.porta, 'utente': 'root',
+                                'chiave': '-----BEGIN OPENSSH PRIVATE KEY-----\nx\n'
+                                          '-----END OPENSSH PRIVATE KEY-----\n'}
+    rr.write_private(a, acc)
+    rr.configure(t)
+    assert (tmp_path / '127.0.0.1.chiave').exists()
+    _base(tmp_path, server.porta)
+    rr.configure(t)
+    assert not (tmp_path / '127.0.0.1.chiave').exists()

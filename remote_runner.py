@@ -34,7 +34,8 @@ import tempfile
 LOG = logging.getLogger('proxreporter.remote')
 HOST = re.compile(r'[A-Za-z0-9][A-Za-z0-9.-]{0,252}')
 UTENTE = re.compile(r'[a-z_][a-z0-9_-]{0,31}')
-# Il contratto con DA-Link (`dalink/catalogo/esiti_componente.py`): si aggiunge, non si rinomina.
+# Il contratto con DA-Link (`dalink/catalogo/comando_proxreporter.py`, ESITI): si aggiunge, non
+# si rinomina.
 ESITI = ('riuscita', 'accesso_rifiutato', 'chiave_host_cambiata', 'host_irraggiungibile',
          'chiave_privata_mancante', 'errore_ssh', 'raccolta_fallita', 'non_configurato')
 ATTESA_SSH = 15
@@ -104,6 +105,22 @@ def impara_chiave(host, port, known):
         transport.close()
     _write_text(known, f'{voce_host(host, port)} {key.get_name()} {key.get_base64()}\n')
     return impronta(key)
+
+
+def _rinomina_voce(known, host, port):
+    """Porta SSH cambiata, stessa chiave: la voce passa da `host` a `[host]:porta` (o viceversa),
+    altrimenti paramiko non la trova e la raccolta direbbe «chiave cambiata» (revisione 19/10)."""
+    import paramiko
+
+    voce = voce_host(host, port)
+    righe = []
+    for line in Path(known).read_text().splitlines():
+        entry = paramiko.hostkeys.HostKeyEntry.from_line(line)
+        if entry is None or entry.key is None:
+            continue
+        righe.append(f'{voce} {entry.key.get_name()} {entry.key.get_base64()}')
+    if righe:
+        _write_text(known, '\n'.join(righe) + '\n')
 
 
 def _impronta_salvata(known):
@@ -190,10 +207,14 @@ def configure_accessi(path, template):
             if chiave:
                 key_file = path.parent / (host + '.chiave')
                 _write_text(key_file, chiave if chiave.endswith('\n') else chiave + '\n')
+            else:
+                # Si entra con password: una chiave di prima (magari sostituita) non resta.
+                _distruggi(path.parent / (host + '.chiave'))
             _scrivi_host(path, template, host, port, username, password, key_file, known)
             if host in dimentica:
                 known.unlink(missing_ok=True)
             if known.exists():
+                _rinomina_voce(known, host, port)
                 print(f'{host}: chiave dell\'host già nota ({_impronta_salvata(known)})')
                 continue
             try:
