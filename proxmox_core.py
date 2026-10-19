@@ -1124,10 +1124,12 @@ def run_report(config: Dict[str, Any], codcli: str, nomecliente: str, server_ide
 
     # Crea il template di notifica per i backup
     executor = extractor.execute_command if execution_mode in ("local", "ssh") else None
-    create_notification_template(codcli, nomecliente, execution_mode, executor)
+    if config.get("configure_notifications", True):
+        create_notification_template(codcli, nomecliente, execution_mode, executor)
     
     # Configura SMTP per le notifiche (se password disponibile)
-    if execution_mode in ("local", "ssh") and executor:
+    if (config.get("configure_notifications", True)
+            and execution_mode in ("local", "ssh") and executor):
         logger.info("")
         logger.info("→ Configurazione SMTP automatica...")
         # Cerca password nel config prima di usare DEFAULT_SMTP_PASSWORD
