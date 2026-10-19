@@ -183,7 +183,7 @@ def configure_accessi(path, template):
                 if nome.endswith(suffisso) and nome[:-len(suffisso)] not in tenuti:
                     _distruggi(f)
                     print(f'{nome[:-len(suffisso)]}: tolto (non più fra gli host)')
-        esito = 0
+        # Un host spento non ferma l'installazione: la prima raccolta lo dice col suo codice.
         for host, port, username, password, chiave in pronti:
             known = path.parent / (host + '.known_hosts')
             key_file = None
@@ -202,9 +202,8 @@ def configure_accessi(path, template):
             except Exception as exc:
                 LOG.error('%s: chiave dell\'host non letta (%s)', host, type(exc).__name__)
                 print(f'{host}: host non raggiungibile, chiave non letta '
-                      '(si salverà alla prima raccolta riuscita)')
-                esito = 1
-        return esito
+                      '(si salverà al primo collegamento riuscito)')
+        return 0
     finally:
         _distruggi(accessi_path)
 

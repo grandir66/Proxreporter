@@ -142,7 +142,7 @@ def test_host_spento_irraggiungibile_e_secondo_host_raccolto(tmp_path, server):
     acc = rr.read_private(a)
     acc['host']['localhost']['porta'] = porta_spenta
     rr.write_private(a, acc)
-    assert rr.configure(t) == 1          # la chiave di localhost non si legge: lo dice
+    assert rr.configure(t) == 0          # host spento: non ferma l'installazione
     report = Mock()
     assert rr.run_all(t, report=report) == 1
     e = _esito(tmp_path)
