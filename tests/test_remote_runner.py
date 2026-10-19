@@ -6,6 +6,9 @@ from unittest.mock import Mock
 import pytest
 
 import remote_runner as rr
+
+# Il collegamento di prova si collauda in test_remote_accessi.py, con un server SSH vero.
+COLLEGATO = lambda ssh: ('riuscita', None)  # noqa: E731
 from proxmox_report import ProxmoxLocalExtractor
 
 
@@ -22,7 +25,7 @@ def test_due_host_forzati_ssh_e_errore_non_ferma_secondo(tmp_path):
             'client': template['config']['client'],
             'system': {'output_directory': str(tmp_path / host)}})); p.chmod(0o600)
     run = Mock(side_effect=[RuntimeError('Finta-non-stampare'), None])
-    assert rr.run_all(f, report=run) == 1
+    assert rr.run_all(f, report=run, prova=COLLEGATO) == 1
     assert run.call_count == 2
     assert [c.args[0]['ssh']['host'] for c in run.call_args_list] == template['hosts']
 
@@ -72,7 +75,7 @@ def test_configure_due_host_cifrati_permessi_rerun_e_segreti_locali(tmp_path, mo
         assert 'Finta-Solo-Base' not in json.dumps(cfg)
         assert (tmp_path / (host + '.json')).stat().st_mode & 0o777 == 0o600
     run = Mock()
-    assert rr.run_all(f, report=run) == 0
+    assert rr.run_all(f, report=run, prova=COLLEGATO) == 0
     assert [call.args[0]['ssh']['password'] for call in run.call_args_list] == ['Finta-Solo-Base']*2
 
 

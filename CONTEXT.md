@@ -30,3 +30,8 @@ docs/superpowers/plans/2026-10-19-configuratore-diretto.md.
 Generatore Manager pubblicato su dev/live254a77b; DA-Linkd9e04d5 in servizio.
 Consegna restante nello stesso piano DA-Link, sezione “Consegna all’altro agente”.
 Il report è pubblicato; la survey remota e il collaudo su host reali sono aperti.
+
+19/10 sera, 2.22.0 (ramo claude/esito-raccolta): accessi.json da DA-Link senza domande,
+fiducia alla prima chiave, esito.json per host + gancio dopo-raccolta. Contratto dei
+codici in ESITI (remote_runner.py) = DA-Link dalink/catalogo/esiti_componente.py: si
+aggiunge, non si rinomina. Il Manager scarica il commit fissato in RIFERIMENTO.

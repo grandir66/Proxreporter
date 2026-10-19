@@ -565,16 +565,28 @@ L'utilizzo, la riproduzione o la distribuzione non autorizzata sono vietati.
 ## Esecutore remoto su base Linux (DA-Link)
 
 `remote_runner.py` consente una sola installazione sulla base appliance/VM e
-raccolte SSH seriali da1–16 host. Il Manager genera template e cron dedicati;
-accessi e chiavi host si inseriscono **sulla base**, mai nel modulo web.
+raccolte SSH seriali da1–16 host. Il Manager genera template e cron dedicati.
 Nessun codice viene installato sui nodi. Password facoltativamente cifrate con la
-chiave locale0600; file e template0600, cartella padre0700. I file precedenti
-vengono conservati durante una nuova configurazione; solo gli host elencati nel
-template corrente vengono eseguiti. Per ruotare un accesso si aggiorna il suo
-file protetto sulla base; non rigenerare la chiave `.secret.key` esistente.
+chiave locale0600; file e template0600, cartella padre0700.
 
-La chiave pubblica del server SSH va verificata con il cliente e fornita al
-configuratore locale. Connessioni con chiavi sconosciute/cambiate falliscono.
+**Accessi dal comando unico di DA-Link (dal 19/10/2026).** DA-Link chiede host,
+porta, utente e password o chiave nella scheda del componente e lascia
+`accessi.json` (0600) nella cartella: `configure` lo legge senza domande, scrive i
+`<host>.json` e lo cancella sovrascrivendolo, anche se lo rifiuta. Gli host non più
+nel template perdono i loro file di accesso. **Fiducia al primo collegamento**: la
+chiave che l'host presenta la prima volta si salva in `<host>.known_hosts`; una chiave
+cambiata dopo si rifiuta (`chiave_host_cambiata`) finché DA-Link non manda
+`"dimentica": [host]` (host reinstallato). Senza `accessi.json` resta il percorso
+interattivo, con la chiave pubblica verificata col cliente.
+
+**Esito.** Ogni `run` fa un collegamento di prova, poi il report, e scrive
+`esito.json` (0600): per host un codice fra `riuscita`, `accesso_rifiutato`,
+`chiave_host_cambiata`, `host_irraggiungibile`, `chiave_privata_mancante`,
+`errore_ssh`, `raccolta_fallita`, `non_configurato`, e l'impronta SHA256 della
+chiave vista. Se esiste `dopo-raccolta` (file regolare dello stesso utente, non
+scrivibile da altri) lo chiama con il percorso di `esito.json`: è il programma di
+DA-Link che manda l'esito alla scheda del componente.
+
 Il profilo forza SSH anche su una base Proxmox, non modifica SMTP/template di
 notifica dei nodi e non usa il merge della configurazione centrale del vecchio CLI.
 Un host fallito non impedisce il successivo; il giro termina con errore se almeno
