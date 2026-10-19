@@ -4,7 +4,8 @@ Fonte per il codice esistente: README.md. Repo ~/Progetti/Proxreporter,
 censimento ~/Progetti/MAPPA-PROGETTI.html; logica del portale in DA-Proxmox,
 ~/Progetti/DA-Proxmox/CONTEXT.md. Segreti solo ACCESSI.md e vault esterno.
 
-Sviluppo19/10/2026 autorizzato da Riccardo via DA-Link: esecutore remoto su base
+Pubblicato19/10/2026 con autorizzazione di Riccardo: main541df27, PR2integrata.
+Sviluppo coordinato da DA-Link: esecutore remoto su base
 Linux, worktree ~/.codex/worktrees/proxreporter-remoto-20261019,
 ramo codex/esecutore-remoto-20261019 da origin/maincf78d19. Primario intatto.
 Nuovo remote_runner.py: configure acquisisce credenziali solo localmente;
@@ -25,3 +26,7 @@ account SFTP comune per cliente è la tappa C2, non inclusa.
 Cancello: bash scripts/controlla.sh con .venv Python3.13 e requirements.txt+pytest.
 Piano coordinatore: worktree DA-Link da-link-rilievi-20261019,
 docs/superpowers/plans/2026-10-19-configuratore-diretto.md.
+
+Generatore Manager pubblicato su dev/live254a77b; DA-Linkd9e04d5 in servizio.
+Consegna restante nello stesso piano DA-Link, sezione “Consegna all’altro agente”.
+Il report è pubblicato; la survey remota e il collaudo su host reali sono aperti.
