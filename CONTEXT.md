@@ -35,3 +35,8 @@ Il report è pubblicato; la survey remota e il collaudo su host reali sono apert
 fiducia alla prima chiave, esito.json per host + gancio dopo-raccolta. Contratto dei
 codici in ESITI (remote_runner.py) = DA-Link dalink/catalogo/esiti_componente.py: si
 aggiunge, non si rinomina. Il Manager scarica il commit fissato in RIFERIMENTO.
+
+## Dal censimento (20/10/2026)
+
+Report e audit sui nodi Proxmox dei clienti: CSV/HTML, SFTP, GELF, heartbeat orario, monitor hardware (SMART, RAID, ECC).
+Stato: **manutenzione**. Si installa e **si auto-aggiorna dal repo GitHub**: archiviare il repo romperebbe i clienti.
